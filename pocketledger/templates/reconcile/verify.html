@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, csrf, textarea %}
+{% block title %}Verify {{ acc.name }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('reconcile.index') }}">{{ icon('chevron-left') }} Verify balances</a>
+<div class="page-head"><div><h1>Verify {{ acc.name }}</h1><div class="sub">{{ acc.category_name }}</div></div></div>
+<form method="post" class="card card-pad form-card" id="verify-form">
+  {{ csrf() }}
+  <div class="grid cols-2" style="margin-bottom:1rem">
+    <div class="card stat" style="box-shadow:none"><div class="label">Expected by your records</div><div class="value num {{ 'neg' if acc.balance_minor < 0 }}">{{ acc.balance_minor|money(acc.currency) }}</div>
+      <div class="hint">{% if acc.last_verified_at %}Last verified {{ acc.last_verified_at|ago }}{% else %}Never verified{% endif %}</div></div>
+    <div class="card stat" style="box-shadow:none"><div class="label">Difference</div><div class="value num muted" id="diff-live">–</div><div class="hint" id="diff-hint">Enter what you counted</div></div>
+  </div>
+  <div class="field {{ 'has-error' if errors.get('counted') }}">
+    <label for="f-counted">{% if acc.category_kind == 'physical' %}Count your cash and enter the total{% else %}Actual balance (from your bank or app){% endif %}</label>
+    <div class="input-money"><span class="sym">{{ cur.symbol }}</span>
+      <input class="input" id="f-counted" name="counted" inputmode="decimal" autocomplete="off" required autofocus placeholder="0" value="{{ values.get('counted', '') }}"
+             data-expected="{{ acc.balance_minor }}" data-minor="{{ cur.minor_unit }}"></div>
+    {% if errors.get('counted') %}<div class="error">{{ errors['counted'] }}</div>{% endif %}
+  </div>
+  {{ textarea('Note (optional)', 'note', values.get('note'), errors, help='Anything that might explain a difference.', rows=2) }}
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{{ icon('shield-check') }} Record verification</button>
+    <a class="btn ghost" href="{{ url_for('reconcile.index') }}">Cancel</a>
+  </div>
+  <p class="help" style="margin-top:1rem">Recording a count never changes your transactions. If it differs, you'll choose what to do next.</p>
+</form>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/verify.js', v=app_version) }}"></script>{% endblock %}

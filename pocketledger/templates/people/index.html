@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty %}
+{% block title %}People{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>People</h1><div class="sub">Who owes you, and whom you owe. Balances come from recorded transactions only.</div></div>
+  <div class="page-actions">
+    <button class="btn" type="button" data-quick="lent">{{ icon('hand-coins') }} Lend</button>
+    <button class="btn" type="button" data-quick="borrowed">{{ icon('hand-helping') }} Borrow</button>
+    <a class="btn primary" href="{{ url_for('people.new') }}">{{ icon('user-plus') }} Add person</a>
+  </div>
+</div>
+
+<div class="grid cols-2" style="margin-bottom:1rem">
+  <div class="card stat"><div class="label">{{ icon('hand-coins') }} Owed to you</div><div class="value num">{{ total_recv|money }}</div><div class="hint">{{ receivables|length }} {{ 'person' if receivables|length == 1 else 'people' }} · not spendable until repaid</div></div>
+  <div class="card stat"><div class="label">{{ icon('receipt') }} You owe</div><div class="value num {{ 'neg' if total_pay }}">{{ total_pay|money }}</div><div class="hint">{{ payables|length }} {{ 'person' if payables|length == 1 else 'people' }}</div></div>
+</div>
+
+<div class="tabs" role="tablist" style="margin-bottom:1rem">
+  <a href="{{ url_for('people.index', tab='receivables') }}" class="{{ 'active' if tab == 'receivables' }}" role="tab">Receivables · owed to you</a>
+  <a href="{{ url_for('people.index', tab='payables') }}" class="{{ 'active' if tab == 'payables' }}" role="tab">Payables · you owe</a>
+</div>
+
+{% macro person_row(p, amount, due, side) %}
+<a class="item" href="{{ url_for('people.detail', person_id=p.id) }}">
+  <span class="avatar {{ 'green' if side == 'r' else 'red' }}">{{ p.name[:1]|upper }}</span>
+  <span class="grow"><span class="title">{{ p.name }}</span><br><span class="meta">
+    {% if due %}{% if due < today %}<span class="neg">overdue since {{ due|datefmt }}</span>{% else %}due {{ due|datefmt }}{% endif %}{% elif p.contact %}{{ p.contact }}{% else %}no due date{% endif %}</span></span>
+  <span class="amount {{ 'neg' if side == 'p' }}">{{ amount|money }}</span>
+</a>
+{% endmacro %}
+
+<section class="card">
+  {% if tab == 'receivables' %}
+    {% if receivables %}<ul class="list">{% for p in receivables %}{{ person_row(p, p.receivable_minor, p.next_due_receivable, 'r') }}{% endfor %}</ul>
+    {% else %}{% call empty('hand-coins', 'Nobody owes you money', 'When you lend money, record it here to track what comes back, including partial repayments.') %}<button class="btn primary" type="button" data-quick="lent">{{ icon('hand-coins') }} Lend money</button>{% endcall %}{% endif %}
+  {% else %}
+    {% if payables %}<ul class="list">{% for p in payables %}{{ person_row(p, p.payable_minor, p.next_due_payable, 'p') }}{% endfor %}</ul>
+    {% else %}{% call empty('receipt', 'You don\'t owe anyone', 'When you borrow money, record it to keep track of what you owe and when.') %}<button class="btn primary" type="button" data-quick="borrowed">{{ icon('hand-helping') }} Borrow money</button>{% endcall %}{% endif %}
+  {% endif %}
+</section>
+
+{% if settled %}
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>{{ icon('circle-check') }} Settled</h2><span class="muted small">{{ settled|length }}</span></div>
+  <ul class="list">{% for p in settled %}
+    <a class="item" href="{{ url_for('people.detail', person_id=p.id) }}"><span class="avatar">{{ p.name[:1]|upper }}</span><span class="grow title">{{ p.name }}{% if p.is_archived %} <span class="badge">archived</span>{% endif %}</span><span class="muted small">{{ 'all settled' if (p.lent_minor or p.borrowed_minor) else 'no transactions yet' }}</span></a>
+  {% endfor %}</ul>
+</section>
+{% endif %}
+{% if not show_archived %}<p style="margin-top:1rem"><a class="small muted" href="{{ url_for('people.index', tab=tab, archived=1) }}">Show archived people</a></p>{% endif %}
+{% endblock %}

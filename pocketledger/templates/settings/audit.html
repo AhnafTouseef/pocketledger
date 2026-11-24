@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Audit trail{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('settings.index') }}">{{ icon('chevron-left') }} Settings</a>
+<div class="page-head">
+  <div><h1>Audit trail</h1><div class="sub">An append-only record of every change. Entries can't be edited or deleted. {{ total }} total.</div></div>
+  <form method="get" class="row"><select class="input" name="entity" onchange="this.form.submit()" aria-label="Filter by type" style="width:auto"><option value="">All types</option>{% for e in entities %}<option value="{{ e }}" {{ 'selected' if e == entity }}>{{ e|replace('_', ' ') }}</option>{% endfor %}</select><noscript><button class="btn">Filter</button></noscript></form>
+</div>
+<section class="card">
+  <ul class="list">
+    {% for l in logs %}
+    <li style="align-items:flex-start">
+      <span class="badge {{ 'red' if l.action in ('void','correct') }}" style="margin-top:.15rem">{{ l.action }}</span>
+      <span class="grow small"><strong>{{ l.entity_type|replace('_', ' ') }}{% if l.entity_id %} #{{ l.entity_id }}{% endif %}</strong>{% if l.reason %}<br><span class="muted">{{ l.reason }}</span>{% endif %}</span>
+      <span class="muted xs nowrap">{{ l.created_at|localdt('%d %b %Y, %I:%M %p') }}</span>
+    </li>
+    {% else %}<li class="muted">Nothing recorded yet.</li>{% endfor %}
+  </ul>
+  {% if pages > 1 %}<div class="pager">
+    {% if page > 1 %}<a class="btn sm" href="{{ url_for('settings.audit_log', page=page-1, entity=entity) }}">Newer</a>{% endif %}
+    <span>Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="btn sm" href="{{ url_for('settings.audit_log', page=page+1, entity=entity) }}">Older</a>{% endif %}
+  </div>{% endif %}
+</section>
+{% endblock %}

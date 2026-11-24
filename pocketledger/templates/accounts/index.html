@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Accounts</h1><div class="sub">{% if groups %}Total across active accounts: <strong class="num {{ 'neg' if total < 0 }}">{{ total|money }}</strong>{% else %}Where your money lives{% endif %}</div></div>
+  <div class="page-actions">
+    <button class="btn" type="button" data-quick="transfer">{{ icon('arrow-left-right') }} Transfer</button>
+    <a class="btn primary" href="{{ url_for('accounts.new') }}">{{ icon('plus') }} New account</a>
+  </div>
+</div>
+
+{% if not groups and not archived %}
+  <div class="card">{% call empty('wallet', 'No accounts yet', 'Start with the places you keep money: your pocket, a bank account, bKash or Nagad. Enter what each holds today as the opening balance.') %}
+    <a class="btn primary" href="{{ url_for('accounts.new') }}">{{ icon('plus') }} Create your first account</a>
+  {% endcall %}</div>
+{% endif %}
+
+<div class="grid cols-2">
+{% for name, g in groups.items() %}
+  <section class="card">
+    <div class="card-head"><h2>{{ icon(g.icon) }} {{ name }}</h2><span class="muted small num">{{ g['items']|sum(attribute='balance_minor')|money }}</span></div>
+    {% for acc in g['items'] %}
+    <a class="account-card" href="{{ url_for('accounts.detail', account_id=acc.id) }}">
+      <span class="grow"><span class="title" style="font-weight:600">{{ acc.name }}</span><br>
+        <span class="xs muted">
+          {% if acc.last_verified_at %}<span class="{{ 'warn' if acc.verified_stale }}">{{ icon('shield-check') }} verified {{ acc.last_verified_at|ago }}</span>
+          {% else %}<span class="{{ 'warn' if g.kind == 'physical' }}">{{ icon('shield-question') }} never verified</span>{% endif %}
+        </span></span>
+      <span class="amount {{ 'neg' if acc.balance_minor < 0 }}">{{ acc.balance_minor|money(acc.currency) }}</span>
+    </a>
+    {% endfor %}
+  </section>
+{% endfor %}
+</div>
+
+<div style="margin-top:1rem">
+  {% if archived %}
+  <section class="card" style="margin-top:1rem">
+    <div class="card-head"><h2>{{ icon('archive') }} Archived</h2></div>
+    {% for acc in archived %}
+    <a class="account-card" href="{{ url_for('accounts.detail', account_id=acc.id) }}"><span class="grow muted">{{ acc.name }}</span><span class="badge">archived</span></a>
+    {% endfor %}
+  </section>
+  {% elif not show_archived %}
+  <a class="small muted" href="{{ url_for('accounts.index', archived=1) }}">Show archived accounts</a>
+  {% endif %}
+</div>
+{% endblock %}

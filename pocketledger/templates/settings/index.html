@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, csrf, post_button %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Settings</h1><div class="sub">Preferences, categories, backups and security</div></div></div>
+
+<div class="grid cols-2" style="align-items:start">
+<div class="stack">
+  <section class="card" id="preferences">
+    <div class="card-head"><h2>{{ icon('sliders-horizontal') }} Preferences</h2></div>
+    <form method="post" action="{{ url_for('settings.preferences') }}" class="card-body">
+      {{ csrf() }}
+      <div class="field"><label for="timezone">Timezone</label><input class="input" id="timezone" name="timezone" value="{{ prefs.timezone }}" required><div class="help">Times are stored in UTC and shown in this timezone. Example: Asia/Dhaka</div></div>
+      <div class="field"><label for="week_start">Week starts on</label><select class="input" id="week_start" name="week_start">{% for w in week_starts %}<option value="{{ w }}" {{ 'selected' if prefs.week_start == w }}>{{ w|capitalize }}</option>{% endfor %}</select></div>
+      <div class="two-col">
+        <div class="field"><label for="verify_reminder_days">Remind to count cash after (days)</label><input class="input" id="verify_reminder_days" name="verify_reminder_days" type="number" min="1" max="365" value="{{ prefs.verify_reminder_days }}"></div>
+        <div class="field"><label for="due_soon_days">Warn about dues within (days)</label><input class="input" id="due_soon_days" name="due_soon_days" type="number" min="1" max="365" value="{{ prefs.due_soon_days }}"></div>
+      </div>
+      <button class="btn primary" type="submit">Save preferences</button>
+    </form>
+  </section>
+
+  <section class="card" id="categories">
+    <div class="card-head"><h2>{{ icon('tags') }} Transaction categories</h2></div>
+    <div class="card-body">
+      {% for kind in ('expense', 'income') %}
+      <h3 style="margin:.6rem 0 .3rem">{{ kind|capitalize }}</h3>
+      {% for c in tx_categories if c.kind == kind %}
+      <form method="post" action="{{ url_for('settings.category_action', scope='tx', cat_id=c.id, action='rename') }}" class="row" style="margin-bottom:.35rem">
+        {{ csrf() }}<input class="input" name="name" value="{{ c.name }}" maxlength="40" style="min-height:38px;{{ 'opacity:.5' if c.is_archived }}" aria-label="Category name">
+        <button class="btn sm" type="submit">Rename</button>
+        <button class="btn sm ghost" type="submit" formaction="{{ url_for('settings.category_action', scope='tx', cat_id=c.id, action='unarchive' if c.is_archived else 'archive') }}">{{ 'Restore' if c.is_archived else 'Archive' }}</button>
+      </form>
+      {% endfor %}
+      {% endfor %}
+      <form method="post" action="{{ url_for('settings.category_add', scope='tx') }}" class="row wrap" style="margin-top:.8rem">
+        {{ csrf() }}<input class="input grow" name="name" placeholder="New category" maxlength="40" required style="min-height:38px">
+        <select class="input" name="kind" style="width:auto;min-height:38px"><option value="expense">Expense</option><option value="income">Income</option></select>
+        <button class="btn sm primary" type="submit">{{ icon('plus') }} Add</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('wallet') }} Account types</h2></div>
+    <div class="card-body">
+      {% for c in account_categories %}
+      <form method="post" action="{{ url_for('settings.category_action', scope='account', cat_id=c.id, action='rename') }}" class="row" style="margin-bottom:.35rem">
+        {{ csrf() }}<input class="input" name="name" value="{{ c.name }}" maxlength="40" style="min-height:38px;{{ 'opacity:.5' if c.is_archived }}" aria-label="Account type name">
+        <span class="badge">{{ c.kind }}</span>
+        <button class="btn sm" type="submit">Rename</button>
+        <button class="btn sm ghost" type="submit" formaction="{{ url_for('settings.category_action', scope='account', cat_id=c.id, action='unarchive' if c.is_archived else 'archive') }}">{{ 'Restore' if c.is_archived else 'Archive' }}</button>
+      </form>
+      {% endfor %}
+      <form method="post" action="{{ url_for('settings.category_add', scope='account') }}" class="row wrap" style="margin-top:.8rem">
+        {{ csrf() }}<input class="input grow" name="name" placeholder="New type, e.g. Rocket" maxlength="40" required style="min-height:38px">
+        <select class="input" name="kind" style="width:auto;min-height:38px"><option value="wallet">Mobile wallet</option><option value="bank">Bank</option><option value="physical">Physical cash</option><option value="other">Other</option></select>
+        <button class="btn sm primary" type="submit">{{ icon('plus') }} Add</button>
+      </form>
+      <p class="help" style="margin-top:.5rem">“Physical cash” types get verification reminders.</p>
+    </div>
+  </section>
+</div>
+
+<div class="stack">
+  <section class="card" id="backup">
+    <div class="card-head"><h2>{{ icon('database-backup') }} Backup &amp; restore</h2></div>
+    <div class="card-body">
+      <p class="muted small">Keep a copy somewhere other than the server (your computer or cloud drive). A backup contains every account, transaction, reconciliation and audit record.</p>
+      <div class="btn-group" style="margin-bottom:.8rem">
+        <a class="btn primary" href="{{ url_for('settings.backup_download_db') }}">{{ icon('download') }} Download database backup</a>
+        <a class="btn" href="{{ url_for('settings.backup_download_json') }}">{{ icon('file-json') }} Export JSON</a>
+        <a class="btn" href="{{ url_for('transactions.export_csv', status='all') }}">{{ icon('table') }} Export transactions CSV</a>
+        {{ post_button(url_for('settings.backup_save'), 'Save a copy on the server', 'btn ghost', icon_name='save') }}
+      </div>
+      {% if backups %}
+      <h3 style="margin:1rem 0 .3rem">Backups on the server</h3>
+      <ul class="list" style="margin:0 -1.2rem">
+        {% for b in backups[:8] %}<li><span class="grow small trunc">{{ b.name }}</span><span class="muted xs">{{ (b.size / 1024)|round(0)|int }} KB</span>
+          <a class="btn sm ghost" href="{{ url_for('settings.backup_download_saved', name=b.name) }}" aria-label="Download {{ b.name }}">{{ icon('download') }}</a>
+          <form method="post" action="{{ url_for('settings.restore_saved') }}" style="display:inline">{{ csrf() }}<input type="hidden" name="name" value="{{ b.name }}"><button class="btn sm ghost" type="submit">Restore…</button></form></li>{% endfor %}
+      </ul>
+      {% endif %}
+      <h3 style="margin:1.2rem 0 .3rem">Restore from a file</h3>
+      <form method="post" action="{{ url_for('settings.restore_upload') }}" enctype="multipart/form-data">
+        {{ csrf() }}
+        <div class="field"><input class="input" type="file" name="backup_file" accept=".db,.json,.sqlite,application/json" required><div class="help">A PocketLedger database backup or JSON export. You'll see what it contains and confirm before anything changes; your current data is backed up first.</div></div>
+        <button class="btn" type="submit">{{ icon('upload') }} Check file…</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card" id="integrity">
+    <div class="card-head"><h2>{{ icon('badge-check') }} Ledger check</h2></div>
+    <div class="card-body">
+      <p class="muted small">Independently re-verifies that every transaction balances, every balance matches its ledger entries, and net worth equals opening balances plus income, minus expenses, plus adjustments.</p>
+      {{ post_button(url_for('settings.integrity'), 'Run check', 'btn', icon_name='play') }}
+    </div>
+  </section>
+
+{% if config.REQUIRE_LOGIN %}
+  <section class="card" id="security">
+    <div class="card-head"><h2>{{ icon('lock') }} Security</h2></div>
+    <form method="post" action="{{ url_for('auth.change_password') }}" class="card-body">
+      {{ csrf() }}
+      <div class="field"><label for="cur">Current password</label><input class="input" id="cur" name="current" type="password" autocomplete="current-password" required></div>
+      <div class="two-col">
+        <div class="field"><label for="new">New password</label><input class="input" id="new" name="new" type="password" autocomplete="new-password" {% if config.MIN_PASSWORD_LENGTH %}minlength="{{ config.MIN_PASSWORD_LENGTH }}" required{% endif %}></div>
+        <div class="field"><label for="conf">Confirm</label><input class="input" id="conf" name="confirm" type="password" autocomplete="new-password" required></div>
+      </div>
+      <button class="btn" type="submit">Change password</button>
+      <p class="help" style="margin-top:.6rem">Changing it signs out every other device.</p>
+    </form>
+  </section>
+{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('scroll-text') }} Audit trail</h2><a class="small" href="{{ url_for('settings.audit_log') }}">View all</a></div>
+    <ul class="list">
+      {% for l in recent_audit %}<li><span class="badge">{{ l.action }}</span><span class="grow small trunc">{{ l.entity_type|replace('_', ' ') }}{% if l.entity_id %} #{{ l.entity_id }}{% endif %}</span><span class="muted xs">{{ l.created_at|localdt('%d %b, %I:%M %p') }}</span></li>
+      {% else %}<li class="muted small">Nothing yet.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+</div>
+{% endblock %}

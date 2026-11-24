@@ -1,0 +1,85 @@
+{% macro icon(name, cls='') %}<i data-lucide="{{ name }}" class="{{ cls }}"></i>{% endmacro %}
+
+{# Colour a money value: positive green, negative red. #}
+{% macro balance(minor, currency=None, strong=False) -%}
+<span class="money num {{ 'neg' if minor < 0 else '' }}{{ ' strong' if strong else '' }}">{{ minor|money(currency) }}</span>
+{%- endmacro %}
+
+{% macro field(label, name, value='', errors={}, type='text', help='', required=False, attrs='', autofocus=False) %}
+<div class="field {{ 'has-error' if errors.get(name) else '' }}">
+  <label for="f-{{ name }}">{{ label }}{% if required %} <span class="faint">*</span>{% endif %}</label>
+  <input class="input" id="f-{{ name }}" name="{{ name }}" type="{{ type }}" value="{{ value or '' }}"
+         {% if required %}required{% endif %} {% if autofocus %}autofocus{% endif %} {{ attrs|safe }}>
+  {% if errors.get(name) %}<div class="error">{{ errors[name] }}</div>{% elif help %}<div class="help">{{ help }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro textarea(label, name, value='', errors={}, help='', rows=3) %}
+<div class="field {{ 'has-error' if errors.get(name) else '' }}">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <textarea class="input" id="f-{{ name }}" name="{{ name }}" rows="{{ rows }}">{{ value or '' }}</textarea>
+  {% if errors.get(name) %}<div class="error">{{ errors[name] }}</div>{% elif help %}<div class="help">{{ help }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro empty(icon_name, title, text) %}
+<div class="empty">
+  <div class="ico">{{ icon(icon_name) }}</div>
+  <h3>{{ title }}</h3>
+  <p>{{ text }}</p>
+  {{ caller() if caller }}
+</div>
+{% endmacro %}
+
+{# One transaction row. `compact` hides account/type columns (used on dashboard & detail lists). #}
+{% macro tx_row(t, compact=False, link=True) %}
+{% set tag = 'a' if link else 'div' %}
+<{{ tag }} class="tx-row {{ 'compact' if compact }} {{ 'voided' if t.status == 'voided' }}" {% if link %}href="{{ url_for('transactions.detail', tx_id=t.id) }}"{% endif %}>
+  <div class="t-date">{{ t.occurred_at|localdt('%d %b %Y') }}<span class="t-time">{{ t.occurred_at|localdt('%I:%M %p') }}</span></div>
+  <div class="t-desc">
+    <span class="t-title">{{ t.description }}{% if t.pre_opening %} <span class="badge" title="Dated before {{ t.pre_opening|join(', ') }} was set up, so it does not change that account's balance">before opening</span>{% endif %}</span>
+    <span class="t-sub">{% if t.person_name %}{{ t.person_name }}{% elif t.category_name %}{{ t.category_name }}{% else %}{{ t.type_label }}{% endif %}{% if compact and t.account_label %} · {{ t.account_label }}{% endif %}{% if t.status == 'voided' %} · voided{% endif %}</span>
+  </div>
+  <div class="t-acct">{{ t.account_label }}</div>
+  <div class="t-type">
+    <span class="badge {{ {'income':'green','repayment_received':'green','borrowed':'green','expense':'red','lent':'amber','repayment_made':'red','transfer':'blue','adjustment':''}[t.type] }}">{{ t.type_label }}</span>
+  </div>
+  <div class="t-amount {{ 'pos' if t.direction > 0 else ('neg' if t.direction < 0 else '') }}">
+    {{ '+' if t.direction > 0 else ('−' if t.direction < 0 else '') }}{{ t.amount_minor|amount(t.currency) }}
+  </div>
+</{{ tag }}>
+{% endmacro %}
+
+{% macro tx_head(compact=False, sort=None, direction=None, endpoint=None, args={}) %}
+<div class="tx-head {{ 'compact' if compact }}">
+  {% if endpoint %}
+    {% set next_dir = 'asc' if direction == 'desc' else 'desc' %}
+    <div><a href="{{ url_for(endpoint, **dict(args, sort='date', dir=(next_dir if sort == 'date' else 'desc'), page=None)) }}">Date{% if sort == 'date' %} {{ '↑' if direction == 'asc' else '↓' }}{% endif %}</a></div>
+    <div>Description</div><div class="h-acct">Account</div><div class="h-type">Type</div>
+    <div class="right"><a href="{{ url_for(endpoint, **dict(args, sort='amount', dir=(next_dir if sort == 'amount' else 'desc'), page=None)) }}">Amount{% if sort == 'amount' %} {{ '↑' if direction == 'asc' else '↓' }}{% endif %}</a></div>
+  {% else %}
+    <div>Date</div><div>Description</div><div class="h-acct">Account</div><div class="h-type">Type</div><div class="right">Amount</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro pager(result, endpoint, args={}) %}
+{% if result.pages > 1 %}
+<div class="pager">
+  {% if result.page > 1 %}<a class="btn sm" href="{{ url_for(endpoint, **dict(args, page=result.page - 1)) }}">{{ icon('chevron-left') }} Newer</a>{% endif %}
+  <span>Page {{ result.page }} of {{ result.pages }} · {{ result.total }} transactions</span>
+  {% if result.page < result.pages %}<a class="btn sm" href="{{ url_for(endpoint, **dict(args, page=result.page + 1)) }}">Older {{ icon('chevron-right') }}</a>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# A POST form styled as a button, with an optional confirmation dialog. #}
+{% macro post_button(url, label, cls='btn', confirm='', icon_name='', fields={}) %}
+<form method="post" action="{{ url }}" style="display:inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% for k, v in fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  <button class="{{ cls }}" type="submit">{% if icon_name %}{{ icon(icon_name) }}{% endif %}{{ label }}</button>
+</form>
+{% endmacro %}
+
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}

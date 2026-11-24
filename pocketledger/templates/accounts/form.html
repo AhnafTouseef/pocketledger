@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, field, textarea, csrf %}
+{% block title %}{{ 'Edit account' if editing else 'New account' }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('accounts.detail', account_id=acc.id) if editing else url_for('accounts.index') }}">{{ icon('chevron-left') }} {{ acc.name if editing else 'Accounts' }}</a>
+<div class="page-head"><h1>{{ 'Edit account' if editing else 'New account' }}</h1></div>
+<form method="post" class="card card-pad form-card">
+  {{ csrf() }}
+  {% if errors.get('_') %}<div class="alert error">{{ errors['_'] }}</div>{% endif %}
+  {{ field('Account name', 'name', values.get('name'), errors, required=True, attrs='maxlength="60" placeholder="e.g. Pocket, bKash, DBBL Savings"', autofocus=True) }}
+  <div class="field {{ 'has-error' if errors.get('category_id') }}">
+    <label for="f-category_id">Type</label>
+    <select class="input" id="f-category_id" name="category_id" required>
+      {% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if values.get('category_id')|string == c.id|string }}>{{ c.name }}</option>{% endfor %}
+    </select>
+    {% if errors.get('category_id') %}<div class="error">{{ errors['category_id'] }}</div>{% else %}<div class="help">“Physical cash” types get verification reminders. Add your own types in Settings.</div>{% endif %}
+  </div>
+  {% if not editing %}
+  <div class="two-col">
+    <div class="field {{ 'has-error' if errors.get('opening_balance') }}">
+      <label for="f-opening_balance">Current balance</label>
+      <div class="input-money"><span class="sym">{{ 0|money|first }}</span><input class="input" id="f-opening_balance" name="opening_balance" inputmode="decimal" value="{{ values.get('opening_balance', '') }}" placeholder="0"></div>
+      {% if errors.get('opening_balance') %}<div class="error">{{ errors['opening_balance'] }}</div>{% else %}<div class="help">What it holds right now. This is the opening balance.</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="f-currency">Currency</label>
+      <select class="input" id="f-currency" name="currency">{% for c in currencies %}<option value="{{ c.code }}" {{ 'selected' if c.code == base_currency }}>{{ c.code }} ({{ c.symbol }})</option>{% endfor %}</select>
+    </div>
+  </div>
+  {{ field('Opening date', 'opened_on', values.get('opened_on'), errors, type='date', help='The balance above is what the account held at the start of this day. Leave empty for today. Transactions dated before this day are kept as history but do NOT change the balance, because the balance already includes them.') }}
+  {% else %}
+    <div class="field {{ 'has-error' if errors.get('opening_balance') }}">
+      <label for="f-opening_balance">Opening balance</label>
+      <div class="input-money"><span class="sym">{{ 0|money|first }}</span><input class="input" id="f-opening_balance" name="opening_balance" inputmode="decimal" value="{{ values.get('opening_balance', '') }}" {{ 'disabled' if locked }}></div>
+      {% if errors.get('opening_balance') %}<div class="error">{{ errors['opening_balance'] }}</div>{% elif locked %}<div class="help">Locked because this account has history. To correct the balance, use Verify and post an adjustment, so the change stays visible.</div>{% endif %}
+    </div>
+  {% endif %}
+  {{ textarea('Description (optional)', 'description', values.get('description'), errors, rows=2) }}
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{{ 'Save changes' if editing else 'Create account' }}</button>
+    <a class="btn ghost" href="{{ url_for('accounts.detail', account_id=acc.id) if editing else url_for('accounts.index') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

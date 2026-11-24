@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, csrf, post_button %}
+{% block title %}Reconciliation #{{ rec.id }}{% endblock %}
+{% block content %}
+{% set live = rec.live_difference_minor %}
+<a class="breadcrumb" href="{{ url_for('reconcile.index') }}">{{ icon('chevron-left') }} Verify balances</a>
+<div class="page-head">
+  <div><h1>{{ rec.account_name }}, counted {{ rec.verified_at|localdate }}</h1><div class="sub">{{ rec.verified_at|localdt }}</div></div>
+  <div class="page-actions"><a class="btn" href="{{ url_for('reconcile.verify', account_id=rec.account_id) }}">{{ icon('rotate-cw') }} Count again</a></div>
+</div>
+
+<div class="grid cols-3" style="margin-bottom:1rem">
+  <div class="card stat"><div class="label">Expected</div><div class="value num">{{ rec.expected_minor|money(rec.currency) }}</div><div class="hint">Your records at the time</div></div>
+  <div class="card stat"><div class="label">Counted</div><div class="value num">{{ rec.counted_minor|money(rec.currency) }}</div><div class="hint">What you physically verified</div></div>
+  <div class="card stat {{ 'alert-stat' if rec.status in ('open','unresolved') }}"><div class="label">Difference</div>
+    <div class="value num {{ 'neg' if rec.difference_minor < 0 else ('pos' if rec.difference_minor > 0) }}">{{ rec.difference_minor|money(rec.currency) }}</div>
+    <div class="hint">
+      {% if rec.difference_minor == 0 %}Matched, nothing to investigate.
+      {% elif rec.status == 'resolved' %}Resolved: your records now agree with this count.
+      {% elif rec.status == 'superseded' %}Superseded by a later count.
+      {% else %}Still {{ live|money(rec.currency) }} apart ({{ 'records are short' if live > 0 else 'records are higher' }}).{% endif %}</div></div>
+</div>
+
+{% if rec.note %}<div class="card card-pad" style="margin-bottom:1rem"><span class="muted small">Note at the time of counting</span><p style="margin:.2rem 0 0;white-space:pre-wrap">{{ rec.note }}</p></div>{% endif %}
+
+{% if rec.status in ('open', 'unresolved') %}
+<section class="card" style="margin-bottom:1rem">
+  <div class="card-head"><h2>{{ icon('search') }} Investigate the {{ live|money(rec.currency) }} difference</h2></div>
+  <div class="card-body">
+    <p class="muted">A difference means your records and your count disagree. That's all. Common causes: a payment you forgot to record, a wrong amount, or a transfer entered on the wrong account. Choose what fits; you can also leave it open.</p>
+    <div class="grid cols-2">
+      <div class="card card-pad" style="box-shadow:none">
+        <h3>{{ icon('plus-circle') }} I forgot to record something</h3>
+        <p class="muted small">Add the missing transaction. It's dated at the time of the count, so it can close the gap without altering anything earlier.</p>
+        <div class="btn-group">
+          {% if live < 0 %}<a class="btn sm primary" href="{{ url_for('transactions.new', type='expense', source_account_id=rec.account_id, reconciliation_id=rec.id, amount=(-live)|amount_plain(rec.currency)) }}">Missing expense</a><a class="btn sm" href="{{ url_for('transactions.new', type='transfer', source_account_id=rec.account_id, reconciliation_id=rec.id) }}">Missing transfer out</a>
+          {% else %}<a class="btn sm primary" href="{{ url_for('transactions.new', type='income', dest_account_id=rec.account_id, reconciliation_id=rec.id, amount=live|amount_plain(rec.currency)) }}">Missing income</a><a class="btn sm" href="{{ url_for('transactions.new', type='transfer', dest_account_id=rec.account_id, reconciliation_id=rec.id) }}">Missing transfer in</a>{% endif %}
+        </div>
+      </div>
+      <div class="card card-pad" style="box-shadow:none">
+        <h3>{{ icon('scale') }} Record an explicit adjustment</h3>
+        <p class="muted small">Make the books match the count with a clearly labelled “balance adjustment” entry. It affects net worth by {{ live|money(rec.currency) }} and stays visible forever.</p>
+        <form method="post" action="{{ url_for('reconcile.adjust', rec_id=rec.id) }}" data-confirm="Post an adjustment of {{ live|money(rec.currency) }} to {{ rec.account_name }}? It will change your net worth by that amount.">
+          {{ csrf() }}
+          <div class="field"><input class="input" name="note" placeholder="Note (optional)" maxlength="300"></div>
+          <label class="check" style="margin-bottom:.7rem"><input type="checkbox" name="confirm" value="yes" required><span>I understand this changes my balance by {{ live|money(rec.currency) }}.</span></label>
+          <button class="btn sm" type="submit">Post adjustment</button>
+        </form>
+      </div>
+    </div>
+    <div class="row" style="margin-top:1rem;gap:.6rem;flex-wrap:wrap">
+      {% if rec.status == 'open' %}
+      <form method="post" action="{{ url_for('reconcile.unresolved', rec_id=rec.id) }}" data-confirm="Leave this unresolved? It stays flagged on your dashboard until the books match.">{{ csrf() }}<button class="btn ghost" type="submit">{{ icon('clock') }} Leave unresolved for now</button></form>
+      {% else %}
+      {{ post_button(url_for('reconcile.reopen', rec_id=rec.id), 'Mark as under investigation', 'btn ghost', icon_name='search') }}
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="grid cols-2">
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('list') }} Timeline</h2></div>
+    <ul class="list">
+      {% for e in timeline %}
+      <li>
+        <span class="badge {{ {'verified':'green','adjustment_posted':'amber','left_unresolved':'amber'}.get(e.entry_type, '') }}">{{ e.entry_type|replace('_', ' ') }}</span>
+        <span class="grow small">
+          {% if e.transaction_id %}<a href="{{ url_for('transactions.detail', tx_id=e.transaction_id) }}">{{ e.tx_description or ('Transaction #' ~ e.transaction_id) }}</a>{% if e.tx_status == 'voided' %} <span class="badge red">voided</span>{% endif %}{% endif %}
+          {% if e.entry_type == 'verified' %}Counted {{ e.amount_minor|money(rec.currency) }}{% endif %}
+          {% if e.note and not e.transaction_id %}{{ e.note }}{% endif %}
+        </span>
+        <span class="muted xs">{{ e.created_at|localdt('%d %b, %I:%M %p') }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('reconcile.note', rec_id=rec.id) }}" class="row">{{ csrf() }}
+        <input class="input" name="note" placeholder="Add an investigation note…" required maxlength="1000"><button class="btn" type="submit">Add</button></form>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('history') }} Activity before the count</h2></div>
+    <ul class="list">
+      {% for t in nearby %}
+      <a class="item" href="{{ url_for('transactions.detail', tx_id=t.id) }}"><span class="grow"><span class="title" style="font-weight:600">{{ t.description }}</span><br><span class="meta">{{ t.occurred_at|localdt }}</span></span><span class="amount">{{ t.amount_minor|money(rec.currency) }}</span></a>
+      {% else %}<li class="muted small">No transactions on this account yet.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

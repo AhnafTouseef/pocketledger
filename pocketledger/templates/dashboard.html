@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, balance, empty, tx_row, tx_head %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+{% set t = d.totals %}
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <div class="sub">{{ d.today|datefmt }} · all figures are calculated from your recorded transactions</div>
+  </div>
+</div>
+
+<section class="grid cols-4" aria-label="Financial overview" style="margin-bottom:1rem">
+  <div class="card stat hero" style="grid-column: span 2">
+    <div class="label">{{ icon('landmark') }} Net worth</div>
+    <div class="value num {{ 'neg' if t.net_worth_minor < 0 else '' }}">{{ t.net_worth_minor|money }}</div>
+    <div class="hint">Assets {{ t.assets_minor|money }} − Liabilities {{ t.liabilities_minor|money }}</div>
+  </div>
+  <div class="card stat">
+    <div class="label">{{ icon('trending-up') }} Total assets</div>
+    <div class="value num">{{ t.assets_minor|money }}</div>
+    <div class="hint">Accounts {{ t.liquid_minor|money }} + owed to you {{ t.receivables_minor|money }}</div>
+  </div>
+  <div class="card stat">
+    <div class="label">{{ icon('trending-down') }} Total liabilities</div>
+    <div class="value num {{ 'neg' if t.liabilities_minor > 0 else '' }}">{{ t.liabilities_minor|money }}</div>
+    <div class="hint">What you owe other people</div>
+  </div>
+  <div class="card stat">
+    <div class="label">{{ icon('banknote') }} Liquid money</div>
+    <div class="value num {{ 'pos' if t.liquid_minor > 0 else ('neg' if t.liquid_minor < 0 else '') }}">{{ t.liquid_minor|money }}</div>
+    <div class="hint">Cash you can actually spend now</div>
+  </div>
+  <a class="card stat" href="{{ url_for('people.index', tab='receivables') }}" style="color:inherit;text-decoration:none">
+    <div class="label">{{ icon('hand-coins') }} Owed to you</div>
+    <div class="value num">{{ t.receivables_minor|money }}</div>
+    <div class="hint">Not spendable until repaid</div>
+  </a>
+  <a class="card stat" href="{{ url_for('people.index', tab='payables') }}" style="color:inherit;text-decoration:none">
+    <div class="label">{{ icon('receipt') }} You owe</div>
+    <div class="value num {{ 'neg' if t.payables_minor > 0 else '' }}">{{ t.payables_minor|money }}</div>
+    <div class="hint">Outstanding payables</div>
+  </a>
+  <a class="card stat {{ 'alert-stat' if d.discrepancy_count }}" href="{{ url_for('reconcile.index') }}" style="color:inherit;text-decoration:none">
+    <div class="label">{{ icon('scale') }} Unreconciled</div>
+    {% if d.discrepancy_count %}
+      <div class="value num {{ 'neg' if d.discrepancy_total_minor < 0 else 'pos' }}">{{ d.discrepancy_total_minor|money }}</div>
+      <div class="hint">{{ d.discrepancy_count }} account{{ 's' if d.discrepancy_count != 1 }} to investigate</div>
+    {% else %}
+      <div class="value num pos">{{ 0|money }}</div>
+      <div class="hint">Every verified balance matches</div>
+    {% endif %}
+  </a>
+</section>
+
+<section class="quick-actions" aria-label="Quick actions" style="margin-bottom:1rem">
+  <button class="qa" type="button" data-quick="expense"><span class="qa-ico">{{ icon('plus') }}</span>Add transaction</button>
+  <button class="qa neutral" type="button" data-quick="transfer"><span class="qa-ico">{{ icon('arrow-left-right') }}</span>Transfer money</button>
+  <button class="qa out" type="button" data-quick="lent"><span class="qa-ico">{{ icon('hand-coins') }}</span>Lend money</button>
+  <button class="qa" type="button" data-quick="borrowed"><span class="qa-ico">{{ icon('hand-helping') }}</span>Borrow money</button>
+  <button class="qa" type="button" data-quick="repayment_received"><span class="qa-ico">{{ icon('undo-2') }}</span>Record repayment</button>
+  <a class="qa neutral" href="{{ url_for('reconcile.index') }}"><span class="qa-ico">{{ icon('shield-check') }}</span>Verify balance</a>
+</section>
+
+<div class="grid dash">
+  <div class="stack">
+    <section class="card" aria-label="Recent activity">
+      <div class="card-head"><h2>{{ icon('history') }} Recent activity</h2><a class="small" href="{{ url_for('transactions.index') }}">See all</a></div>
+      {% if d.recent %}
+        {{ tx_head(compact=True) }}
+        {% for tx in d.recent %}{{ tx_row(tx, compact=True) }}{% endfor %}
+      {% else %}
+        {% call empty('arrow-left-right', 'No transactions yet', 'Record your first expense, income or transfer. It takes a few seconds.') %}
+          <button class="btn primary" type="button" data-quick="expense">{{ icon('plus') }} Add transaction</button>
+        {% endcall %}
+      {% endif %}
+    </section>
+
+    <section class="card desktop-only" aria-label="Net worth, last 30 days">
+      <div class="card-head"><h2>{{ icon('line-chart') }} Net worth, last 30 days</h2><a class="small" href="{{ url_for('analytics.index') }}">Analytics</a></div>
+      <div class="card-body"><div class="chart-box sm"><canvas id="nw-chart" aria-label="Net worth over the last 30 days" role="img"></canvas></div></div>
+      <script type="application/json" id="nw-data">{{ d.net_worth_series|tojson }}</script>
+      <script type="application/json" id="cur-data">{{ d.currency|tojson }}</script>
+    </section>
+  </div>
+
+  <div class="stack dash-right">
+    <section class="card" aria-label="Financial alerts">
+      <div class="card-head"><h2>{{ icon('bell') }} Alerts{% if d.alert_count %} <span class="badge amber">{{ d.alert_count }}</span>{% endif %}</h2></div>
+      {% set a = d.alerts %}
+      {% if d.alert_count == 0 %}
+        <div class="empty" style="padding:1.4rem"><div class="ico">{{ icon('circle-check') }}</div><h3>All clear</h3><p style="margin:0">No discrepancies, overdue loans or unverified cash.</p></div>
+      {% else %}
+      <ul class="list">
+        {% for r in a.discrepancies %}
+        <a class="item" href="{{ url_for('reconcile.detail', rec_id=r.id) }}">
+          <span class="avatar amber">{{ icon('scale') }}</span>
+          <span class="grow"><span class="title">{{ r.account_name }} doesn't match</span><br><span class="meta">Counted {{ r.counted_minor|money }}, books show {{ (r.counted_minor - r.live_difference_minor)|money }}{% if r.status == 'unresolved' %} · left unresolved{% endif %}</span></span>
+          <span class="amount {{ 'neg' if r.live_difference_minor < 0 else 'pos' }}">{{ r.live_difference_minor|money }}</span>
+        </a>
+        {% endfor %}
+        {% for l in a.overdue_receivables %}
+        <a class="item" href="{{ url_for('people.detail', person_id=l.person_id) }}">
+          <span class="avatar red">{{ icon('clock-alert') }}</span>
+          <span class="grow"><span class="title">{{ l.person_name }} is overdue</span><br><span class="meta">{{ l.days_overdue }} day{{ 's' if l.days_overdue != 1 }} past {{ l.due_date|datefmt }}</span></span>
+          <span class="amount">{{ l.remaining_minor|money }}</span>
+        </a>
+        {% endfor %}
+        {% for l in a.upcoming_payables %}
+        <a class="item" href="{{ url_for('people.detail', person_id=l.person_id) }}">
+          <span class="avatar {{ 'red' if l.days_left < 0 else 'amber' }}">{{ icon('calendar-clock') }}</span>
+          <span class="grow"><span class="title">You owe {{ l.person_name }}</span><br><span class="meta">{% if l.days_left < 0 %}Overdue by {{ -l.days_left }} day{{ 's' if l.days_left != -1 }}{% elif l.days_left == 0 %}Due today{% else %}Due in {{ l.days_left }} day{{ 's' if l.days_left != 1 }}{% endif %} · {{ l.due_date|datefmt }}</span></span>
+          <span class="amount neg">{{ l.remaining_minor|money }}</span>
+        </a>
+        {% endfor %}
+        {% for acc in a.unverified_cash %}
+        <a class="item" href="{{ url_for('reconcile.verify', account_id=acc.id) }}">
+          <span class="avatar">{{ icon('banknote') }}</span>
+          <span class="grow"><span class="title">Count your {{ acc.name }}</span><br><span class="meta">{% if acc.last_verified_at %}Last verified {{ acc.last_verified_at|ago }}{% else %}Never verified{% endif %}</span></span>
+          <span class="badge">Verify</span>
+        </a>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+
+    <section class="card" aria-label="Accounts">
+      <div class="card-head"><h2>{{ icon('wallet') }} Accounts</h2><a class="small" href="{{ url_for('accounts.index') }}">Manage</a></div>
+      {% if d.accounts %}
+        <div>
+        {% for acc in d.accounts %}
+        <a class="account-card" href="{{ url_for('accounts.detail', account_id=acc.id) }}">
+          <span class="avatar {{ 'green' if acc.category_kind == 'physical' }}">{{ icon(acc.category_icon) }}</span>
+          <span class="grow"><span class="title" style="font-weight:600">{{ acc.name }}</span><br>
+            <span class="meta xs muted">{{ acc.category_name }} ·
+              {% if acc.last_verified_at %}<span class="{{ 'warn' if acc.verified_stale }}">verified {{ acc.last_verified_at|ago }}</span>{% else %}<span class="{{ 'warn' if acc.category_kind == 'physical' }}">never verified</span>{% endif %}</span></span>
+          <span class="amount {{ 'neg' if acc.balance_minor < 0 }}">{{ acc.balance_minor|money(acc.currency) }}</span>
+        </a>
+        {% endfor %}
+        </div>
+      {% else %}
+        {% call empty('wallet', 'Add your first account', 'Create accounts for your pocket, wallet, bank and mobile money so PocketLedger knows where your money is.') %}
+          <a class="btn primary" href="{{ url_for('accounts.new') }}">{{ icon('plus') }} New account</a>
+        {% endcall %}
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts.js', v=app_version) }}"></script>
+{% endblock %}

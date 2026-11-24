@@ -1,0 +1,15 @@
+{% extends 'auth/layout.html' %}
+{% block title %}Create your account{% endblock %}
+{% block body %}
+<form method="post" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h1 style="font-size:1.2rem;margin-bottom:.3rem">Create your account</h1>
+  <p class="muted small">PocketLedger is a single-user app. This account protects all your financial data.</p>
+  {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+  <div class="field"><label for="u">Username</label><input class="input" id="u" name="username" autocomplete="username" required autofocus minlength="3" maxlength="40"></div>
+  <div class="field"><label for="p">Password</label><input class="input" id="p" name="password" type="password" autocomplete="new-password" {% if config.MIN_PASSWORD_LENGTH %}required minlength="{{ config.MIN_PASSWORD_LENGTH }}"{% endif %}><div class="help">{% if config.MIN_PASSWORD_LENGTH %}At least {{ config.MIN_PASSWORD_LENGTH }} characters. A passphrase is easiest to remember and hardest to guess.{% else %}No minimum set. Leave blank for no password.{% endif %}</div></div>
+  <div class="field"><label for="c">Confirm password</label><input class="input" id="c" name="confirm" type="password" autocomplete="new-password" required></div>
+  {% if token_required %}<div class="field"><label for="t">Setup token</label><input class="input" id="t" name="setup_token" type="password" required><div class="help">The SETUP_TOKEN from your server configuration.</div></div>{% endif %}
+  <button class="btn primary block" type="submit">Create account</button>
+</form>
+{% endblock %}

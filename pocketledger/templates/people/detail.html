@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty, tx_row, tx_head, pager, post_button %}
+{% block title %}{{ p.name }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('people.index') }}">{{ icon('chevron-left') }} People</a>
+<div class="page-head">
+  <div>
+    <h1>{{ p.name }} {% if p.is_archived %}<span class="badge">archived</span>{% endif %}</h1>
+    <div class="sub">{{ p.contact or 'No contact details' }}</div>
+  </div>
+  <div class="page-actions">
+    {% if not p.is_archived %}
+    <a class="btn" href="{{ url_for('people.edit', person_id=p.id) }}">{{ icon('pencil') }} Edit</a>
+    {% else %}{{ post_button(url_for('people.unarchive', person_id=p.id), 'Restore', 'btn', icon_name='archive-restore') }}{% endif %}
+  </div>
+</div>
+{% if p.notes %}<div class="card card-pad" style="margin-bottom:1rem"><span class="muted small">Notes</span><p style="margin:.2rem 0 0;white-space:pre-wrap">{{ p.notes }}</p></div>{% endif %}
+
+<div class="grid cols-2" style="margin-bottom:1rem">
+  <div class="card stat {{ 'hero' if p.receivable_minor }}">
+    <div class="label">{{ icon('hand-coins') }} {{ p.name }} owes you</div>
+    <div class="value num">{{ p.receivable_minor|money }}</div>
+    <div class="hint">Lent {{ p.lent_minor|money }} · repaid {{ p.received_back_minor|money }}</div>
+    {% if not p.is_archived %}<div class="btn-group" style="margin-top:.8rem">
+      <a class="btn sm" href="{{ url_for('transactions.new', type='lent', person_id=p.id) }}">{{ icon('hand-coins') }} Lend more</a>
+      {% if p.receivable_minor %}<a class="btn sm primary" href="{{ url_for('transactions.new', type='repayment_received', person_id=p.id) }}">{{ icon('undo-2') }} Record repayment</a>{% endif %}
+    </div>{% endif %}
+  </div>
+  <div class="card stat">
+    <div class="label">{{ icon('receipt') }} You owe {{ p.name }}</div>
+    <div class="value num {{ 'neg' if p.payable_minor }}">{{ p.payable_minor|money }}</div>
+    <div class="hint">Borrowed {{ p.borrowed_minor|money }} · repaid {{ p.repaid_minor|money }}</div>
+    {% if not p.is_archived %}<div class="btn-group" style="margin-top:.8rem">
+      <a class="btn sm" href="{{ url_for('transactions.new', type='borrowed', person_id=p.id) }}">{{ icon('hand-helping') }} Borrow more</a>
+      {% if p.payable_minor %}<a class="btn sm primary" href="{{ url_for('transactions.new', type='repayment_made', person_id=p.id) }}">{{ icon('send') }} Repay</a>{% endif %}
+    </div>{% endif %}
+  </div>
+</div>
+
+{% macro loans(rows, title, kind) %}
+{% if rows %}
+<section class="card" style="margin-bottom:1rem">
+  <div class="card-head"><h2>{{ icon('list') }} {{ title }}</h2><span class="muted xs">Repayments are applied to the oldest loan first</span></div>
+  <ul class="list">
+    {% for l in rows %}
+    <li>
+      <span class="grow"><span class="title" style="font-weight:600">{{ l.description }}</span><br>
+        <span class="meta">{{ l.occurred_at|localdate }}{% if l.due_date %} · due {{ l.due_date|datefmt }}{% if l.remaining_minor and l.due_date < today %} <span class="badge red">overdue</span>{% endif %}{% endif %}</span>
+        <div class="progress" style="margin-top:.45rem;max-width:260px"><span style="width:{{ ((l.repaid_minor * 100) // l.amount_minor) }}%"></span></div></span>
+      <span class="amount">{{ l.amount_minor|money }}<br><span class="xs {{ 'pos' if not l.remaining_minor else 'muted' }}">{{ 'settled' if not l.remaining_minor else (l.remaining_minor|money ~ ' left') }}</span></span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endmacro %}
+{{ loans(loans_recv, 'Money you lent', 'r') }}
+{{ loans(loans_pay, 'Money you borrowed', 'p') }}
+
+<section class="card">
+  <div class="card-head"><h2>{{ icon('history') }} Transaction history</h2></div>
+  {% if history['items'] %}
+    {{ tx_head(compact=True) }}
+    {% for tx in history['items'] %}{{ tx_row(tx, compact=True) }}{% endfor %}
+    {{ pager(history, 'people.detail', {'person_id': p.id}) }}
+  {% else %}
+    {% call empty('arrow-left-right', 'Nothing recorded yet', 'Lend or borrow money to start a history with ' ~ p.name ~ '.') %}{% endcall %}
+  {% endif %}
+</section>
+
+{% if not p.is_archived and not p.receivable_minor and not p.payable_minor %}
+<div class="card card-pad" style="margin-top:1rem"><h3 style="margin-bottom:.4rem">Archive person</h3><p class="muted small">Hide them from pickers. Allowed once nothing is outstanding; history is kept.</p>{{ post_button(url_for('people.archive', person_id=p.id), 'Archive', 'btn danger sm', confirm='Archive ' ~ p.name ~ '?', icon_name='archive') }}</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty, tx_row, tx_head, pager %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Transactions</h1><div class="sub">{{ result.total }} {{ 'transaction' if result.total == 1 else 'transactions' }}{% if active_filters %} match your filters{% endif %}</div></div>
+  <div class="page-actions">
+    <a class="btn" href="{{ url_for('transactions.export_csv', **active_filters) }}">{{ icon('download') }} Export CSV</a>
+    <button class="btn primary" type="button" data-quick="expense">{{ icon('plus') }} Add</button>
+  </div>
+</div>
+
+<form method="get" class="card" style="margin-bottom:1rem" id="filter-form">
+  <div class="filters">
+    <div class="field grow-2"><label for="q">Search</label><input class="input" id="q" name="q" type="search" value="{{ filters.q }}" placeholder="Description, person, account, amount…"></div>
+    <div class="field"><label for="type">Type</label>
+      <select class="input" id="type" name="type"><option value="">All types</option>{% for k, v in types.items() %}<option value="{{ k }}" {{ 'selected' if filters.type == k }}>{{ v }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="account_id">Account</label>
+      <select class="input" id="account_id" name="account_id"><option value="">All accounts</option>{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if filters.account_id == a.id|string }}>{{ a.name }}{{ ' (archived)' if a.is_archived }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="person_id">Person</label>
+      <select class="input" id="person_id" name="person_id"><option value="">Anyone</option>{% for p in people %}<option value="{{ p.id }}" {{ 'selected' if filters.person_id == p.id|string }}>{{ p.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="category_id">Category</label>
+      <select class="input" id="category_id" name="category_id"><option value="">All categories</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category_id == c.id|string }}>{{ c.name }} ({{ c.kind }})</option>{% endfor %}</select></div>
+    <div class="field"><label for="status">Show</label>
+      <select class="input" id="status" name="status"><option value="posted" {{ 'selected' if filters.status in ('', 'posted') }}>Active</option><option value="voided" {{ 'selected' if filters.status == 'voided' }}>Voided only</option><option value="all" {{ 'selected' if filters.status == 'all' }}>Active + voided</option></select></div>
+    <div class="field"><label for="date_from">From</label><input class="input" id="date_from" name="date_from" type="date" value="{{ filters.date_from }}"></div>
+    <div class="field"><label for="date_to">To</label><input class="input" id="date_to" name="date_to" type="date" value="{{ filters.date_to }}"></div>
+    <input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="dir" value="{{ direction }}">
+    <div class="row" style="align-self:end;gap:.5rem;grid-column: span 2">
+      <button class="btn primary" type="submit">{{ icon('search') }} Apply</button>
+      {% if active_filters %}<a class="btn ghost" href="{{ url_for('transactions.index') }}">Clear</a>{% endif %}
+    </div>
+  </div>
+</form>
+
+{% if result['items'] %}
+<div class="row wrap muted small" style="margin:0 .2rem .6rem;gap:1.2rem">
+  <span>Income in results: <strong class="pos num">{{ sums.income_minor|money }}</strong></span>
+  <span>Expenses in results: <strong class="neg num">{{ sums.expense_minor|money }}</strong></span>
+</div>
+{% endif %}
+
+<section class="card">
+  {% if result['items'] %}
+    {{ tx_head(sort=sort, direction=direction, endpoint='transactions.index', args=active_filters) }}
+    {% for tx in result['items'] %}{{ tx_row(tx) }}{% endfor %}
+    {{ pager(result, 'transactions.index', dict(active_filters, sort=sort, dir=direction)) }}
+  {% elif active_filters %}
+    {% call empty('search-x', 'Nothing matches', 'Try removing a filter or searching for something broader.') %}<a class="btn" href="{{ url_for('transactions.index') }}">Clear filters</a>{% endcall %}
+  {% else %}
+    {% call empty('arrow-left-right', 'No transactions yet', 'Everything you record (expenses, income, transfers, loans) appears here, searchable and filterable.') %}<button class="btn primary" type="button" data-quick="expense">{{ icon('plus') }} Add your first transaction</button>{% endcall %}
+  {% endif %}
+</section>
+{% endblock %}

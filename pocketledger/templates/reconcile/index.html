@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty %}
+{% block title %}Verify balances{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Verify balances</h1><div class="sub">Count what you really hold and compare it with your records. A difference is never assumed to be anything in particular; you decide how to handle it.</div></div>
+</div>
+
+{% if discrepancies %}
+<section class="card" style="margin-bottom:1rem;border-color:rgba(251,191,36,.4)">
+  <div class="card-head"><h2>{{ icon('scale') }} Needs investigation <span class="badge amber">{{ discrepancies|length }}</span></h2></div>
+  <ul class="list">
+    {% for r in discrepancies %}
+    <a class="item" href="{{ url_for('reconcile.detail', rec_id=r.id) }}">
+      <span class="avatar amber">{{ icon('scale') }}</span>
+      <span class="grow"><span class="title">{{ r.account_name }}</span><br><span class="meta">Counted {{ r.counted_minor|money(r.currency) }} on {{ r.verified_at|localdate }}{% if r.status == 'unresolved' %} · left unresolved{% endif %}</span></span>
+      <span class="amount {{ 'neg' if r.live_difference_minor < 0 else 'pos' }}">{{ r.live_difference_minor|money(r.currency) }}</span>
+    </a>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card" style="margin-bottom:1rem">
+  <div class="card-head"><h2>{{ icon('wallet') }} Accounts</h2><span class="muted xs">Physical cash is flagged after {{ reminder_days }} days without a count</span></div>
+  {% if accounts %}
+  <ul class="list">
+    {% for acc in accounts %}
+    <li>
+      <span class="avatar {{ 'green' if acc.category_kind == 'physical' }}">{{ icon(acc.category_icon) }}</span>
+      <span class="grow"><span class="title" style="font-weight:600">{{ acc.name }}</span><br>
+        <span class="meta {{ 'warn' if acc.needs_verification }}">{% if acc.last_verified_at %}Verified {{ acc.last_verified_at|ago }} at {{ acc.last_verified_balance_minor|money(acc.currency) }}{% else %}Never verified{% endif %}</span></span>
+      <span class="amount hide-sm">{{ acc.balance_minor|money(acc.currency) }}</span>
+      <a class="btn sm {{ 'primary' if acc.needs_verification or acc.category_kind == 'physical' }}" href="{{ url_for('reconcile.verify', account_id=acc.id) }}">Verify</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}{% call empty('wallet', 'No accounts to verify', 'Create an account first.') %}<a class="btn primary" href="{{ url_for('accounts.new') }}">New account</a>{% endcall %}{% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>{{ icon('history') }} Reconciliation history</h2></div>
+  {% if history %}
+  <ul class="list">
+    {% for r in history %}
+    <a class="item" href="{{ url_for('reconcile.detail', rec_id=r.id) }}">
+      <span class="grow"><span class="title">{{ r.account_name }}</span><br><span class="meta">{{ r.verified_at|localdt }} · expected {{ r.expected_minor|money(r.currency) }}, counted {{ r.counted_minor|money(r.currency) }}</span></span>
+      {% if r.difference_minor == 0 %}<span class="badge green">matched</span>
+      {% else %}<span class="amount {{ 'neg' if r.difference_minor < 0 else 'pos' }}">{{ r.difference_minor|money(r.currency) }}</span>
+        <span class="badge {{ {'resolved':'green','open':'amber','unresolved':'amber','superseded':''}[r.status] }}">{{ r.status }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </ul>
+  {% else %}<div class="card-body muted">No counts recorded yet.</div>{% endif %}
+</section>
+{% endblock %}

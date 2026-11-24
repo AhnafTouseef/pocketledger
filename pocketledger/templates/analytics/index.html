@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty %}
+{% block title %}Analytics{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Analytics</h1><div class="sub">{{ a.label }} · every figure is derived from your recorded transactions</div></div>
+</div>
+
+<div class="card card-pad" style="margin-bottom:1rem">
+  <div class="row wrap between">
+    <div class="tabs" role="tablist">
+      {% for key, label in a.presets %}
+      {% if key != 'custom' %}<a href="{{ url_for('analytics.index', range=key) }}" class="{{ 'active' if a.preset == key }}">{{ label }}</a>{% endif %}
+      {% endfor %}
+    </div>
+    <form method="get" class="row wrap" style="gap:.5rem">
+      <input type="hidden" name="range" value="custom">
+      <label class="sr-only" for="start">From</label><input class="input" style="width:auto" id="start" name="start" type="date" value="{{ a.start }}" required>
+      <span class="muted">to</span>
+      <label class="sr-only" for="end">To</label><input class="input" style="width:auto" id="end" name="end" type="date" value="{{ a.end }}" required>
+      <button class="btn {{ 'primary' if a.preset == 'custom' }}" type="submit">Apply</button>
+    </form>
+  </div>
+</div>
+
+{% set rt = a.range_totals %}
+<div class="grid cols-4" style="margin-bottom:1rem">
+  <div class="card stat"><div class="label">{{ icon('trending-up') }} Income</div><div class="value num pos">{{ rt.income|money }}</div><div class="hint">in this period</div></div>
+  <div class="card stat"><div class="label">{{ icon('trending-down') }} Spending</div><div class="value num neg">{{ rt.expense|money }}</div><div class="hint">in this period</div></div>
+  <div class="card stat"><div class="label">{{ icon('scale') }} Net saved</div><div class="value num {{ 'neg' if rt.income - rt.expense < 0 else 'pos' }}">{{ (rt.income - rt.expense)|money }}</div><div class="hint">income − spending</div></div>
+  <div class="card stat"><div class="label">{{ icon('hand-coins') }} Net lending</div><div class="value num">{{ ((rt.lent - rt.repayment_received) - (rt.borrowed - rt.repayment_made))|money }}</div><div class="hint">lent/repaid minus borrowed/repaid</div></div>
+</div>
+
+<div class="grid cols-2">
+  <section class="card"><div class="card-head"><h2>{{ icon('line-chart') }} Net worth over time</h2></div><div class="card-body"><div class="chart-box"><canvas id="c-networth" role="img" aria-label="Net worth over time"></canvas></div><div class="legend-note">Value at the end of each {{ a.granularity }}.</div></div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('scale') }} Assets versus liabilities</h2></div><div class="card-body"><div class="chart-box"><canvas id="c-assets" role="img" aria-label="Assets versus liabilities"></canvas></div><div class="legend-note">Assets = accounts + money owed to you. Liabilities = money you owe.</div></div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('chart-column') }} Income versus spending</h2></div><div class="card-body"><div class="chart-box"><canvas id="c-flow" role="img" aria-label="Income versus spending"></canvas></div></div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('calendar-range') }} Monthly income and spending</h2><span class="muted xs">last 12 months</span></div><div class="card-body"><div class="chart-box"><canvas id="c-monthly" role="img" aria-label="Monthly income and spending"></canvas></div></div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('pie-chart') }} Account balance distribution</h2></div><div class="card-body">{% if a.account_distribution %}<div class="chart-box"><canvas id="c-accounts" role="img" aria-label="Balance by account"></canvas></div>{% else %}<p class="muted">No accounts yet.</p>{% endif %}</div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('shopping-bag') }} Where spending went</h2></div><div class="card-body">{% if a.expense_categories %}<div class="chart-box"><canvas id="c-cats" role="img" aria-label="Spending by category"></canvas></div>{% else %}<p class="muted">No spending in this period.</p>{% endif %}</div></section>
+  <section class="card"><div class="card-head"><h2>{{ icon('hand-coins') }} Lending and borrowing</h2></div><div class="card-body"><div class="chart-box"><canvas id="c-lending" role="img" aria-label="Lending and borrowing"></canvas></div><div class="legend-note">Money lent and borrowed, and repayments, per {{ a.granularity }}.</div></div></section>
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('users') }} Outstanding right now</h2></div>
+    <div class="card-body">
+      <div class="grid cols-2" style="gap:1.2rem">
+        <div><h3 class="pos" style="margin-bottom:.4rem">Owed to you</h3>{% for r in a.receivables %}<div class="row between small" style="padding:.3rem 0;border-top:1px solid var(--border)"><span>{{ r.name }}</span><span class="num">{{ r.amount|money }}</span></div>{% else %}<p class="muted small">Nobody.</p>{% endfor %}</div>
+        <div><h3 class="neg" style="margin-bottom:.4rem">You owe</h3>{% for r in a.payables %}<div class="row between small" style="padding:.3rem 0;border-top:1px solid var(--border)"><span>{{ r.name }}</span><span class="num">{{ r.amount|money }}</span></div>{% else %}<p class="muted small">Nobody.</p>{% endfor %}</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>{{ icon('shield-check') }} Reconciliation discrepancies in this period</h2></div>
+  {% if a.reconciliations %}
+  <ul class="list">
+    {% for r in a.reconciliations %}
+    <a class="item" href="{{ url_for('reconcile.detail', rec_id=r.id) }}">
+      <span class="grow"><span class="title">{{ r.account }}</span><br><span class="meta">{{ r.verified_at|localdt }} · expected {{ r.expected|money }}, counted {{ r.counted|money }}</span></span>
+      {% if r.difference == 0 %}<span class="badge green">matched</span>{% else %}<span class="amount {{ 'neg' if r.difference < 0 else 'pos' }}">{{ r.difference|money }}</span><span class="badge {{ 'green' if r.status == 'resolved' else ('amber' if r.status in ('open','unresolved') else '') }}">{{ r.status }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </ul>
+  {% else %}<div class="card-body muted">No balance verifications in this period.</div>{% endif %}
+</section>
+
+<script type="application/json" id="analytics-data">{{ a|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts.js', v=app_version) }}"></script>
+{% endblock %}

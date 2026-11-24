@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, csrf %}
+{% block title %}Review restore{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('settings.index') }}">{{ icon('chevron-left') }} Settings</a>
+<div class="page-head"><div><h1>Review before restoring</h1><div class="sub">{{ source }} · {{ kind }}</div></div></div>
+
+{% if report.ok %}
+<div class="alert success">{{ icon('circle-check') }}<div class="grow"><strong>This file is valid.</strong> Every transaction balances and all relationships are intact.</div></div>
+{% else %}
+<div class="alert error">{{ icon('circle-alert') }}<div class="grow"><strong>This file failed validation and can't be restored.</strong>
+  <ul style="margin:.4rem 0 0 1.1rem;padding:0">{% for e in report.errors[:8] %}<li>{{ e }}</li>{% endfor %}</ul></div></div>
+{% endif %}
+{% for w in report.warnings %}<div class="alert warning">{{ icon('triangle-alert') }}<div class="grow">{{ w }}</div></div>{% endfor %}
+
+{% if report.stats %}
+<div class="card" style="margin-bottom:1rem;max-width:720px">
+  <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:.4rem 1rem;padding:1rem 1.2rem" class="small">
+    <strong></strong><strong>In the file</strong><strong>Your data now</strong>
+    {% for key, label in (('accounts','Accounts'),('people','People'),('transactions','Transactions'),('reconciliations','Reconciliations')) %}
+    <span class="muted">{{ label }}</span><span class="num">{{ report.stats[key] }}</span><span class="num">{{ live[key] }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if report.ok %}
+<div class="card card-pad form-card" style="border-color:rgba(248,113,113,.4)">
+  <h2 style="margin-bottom:.4rem">{{ icon('triangle-alert') }} This replaces your current data</h2>
+  <p class="muted">Your current database is saved first as a “pre-restore” backup, and your login is kept. Anything recorded after this backup was made will no longer appear unless you restore the pre-restore backup.</p>
+  <form method="post" action="{{ url_for('settings.restore_confirm') }}">
+    {{ csrf() }}
+    <div class="field"><label for="ct">Type RESTORE to confirm</label><input class="input" id="ct" name="confirm_text" autocomplete="off" autocapitalize="characters" required></div>
+    <div class="form-actions">
+      <button class="btn danger" type="submit">Replace my data</button>
+      <button class="btn ghost" type="submit" formaction="{{ url_for('settings.restore_cancel') }}" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</div>
+{% else %}
+<form method="post" action="{{ url_for('settings.restore_cancel') }}">{{ csrf() }}<button class="btn">Back to settings</button></form>
+{% endif %}
+{% endblock %}

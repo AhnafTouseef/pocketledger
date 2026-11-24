@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, empty, tx_row, tx_head, pager, post_button %}
+{% block title %}{{ acc.name }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('accounts.index') }}">{{ icon('chevron-left') }} Accounts</a>
+<div class="page-head">
+  <div>
+    <h1>{{ acc.name }} {% if acc.is_archived %}<span class="badge">archived</span>{% endif %}</h1>
+    <div class="sub">{{ acc.category_name }} · {{ acc.currency }} · opened {{ acc.opened_on|datefmt }}</div>
+  </div>
+  <div class="page-actions">
+    {% if not acc.is_archived %}
+    <a class="btn primary" href="{{ url_for('reconcile.verify', account_id=acc.id) }}">{{ icon('shield-check') }} Verify balance</a>
+    <a class="btn" href="{{ url_for('transactions.new', type='transfer', source_account_id=acc.id) }}">{{ icon('arrow-left-right') }} Transfer</a>
+    <a class="btn" href="{{ url_for('accounts.edit', account_id=acc.id) }}">{{ icon('pencil') }} Edit</a>
+    {% else %}
+    {{ post_button(url_for('accounts.unarchive', account_id=acc.id), 'Restore account', 'btn', icon_name='archive-restore') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid cols-3" style="margin-bottom:1rem">
+  <div class="card stat hero"><div class="label">{{ icon('wallet') }} Current balance</div><div class="value num {{ 'neg' if acc.balance_minor < 0 }}">{{ acc.balance_minor|money(acc.currency) }}</div><div class="hint">Opening balance {{ acc.opening_balance_minor|money(acc.currency) }} on {{ acc.opened_on|datefmt }}, plus transactions since then. Older entries are history only.</div></div>
+  <div class="card stat"><div class="label">{{ icon('shield-check') }} Last verified</div>
+    {% if acc.last_verified_at %}<div class="value num">{{ acc.last_verified_balance_minor|money(acc.currency) }}</div><div class="hint {{ 'warn' if acc.verified_stale }}">counted {{ acc.last_verified_at|ago }} ({{ acc.last_verified_at|localdate }})</div>
+    {% else %}<div class="value muted">Never</div><div class="hint {{ 'warn' if acc.category_kind == 'physical' }}">Count it and enter the amount to verify</div>{% endif %}</div>
+  <div class="card stat"><div class="label">{{ icon('info') }} Details</div><div class="hint" style="margin-top:.5rem;color:var(--muted)">{{ acc.description or 'No description.' }}</div></div>
+</div>
+
+{% if recs and recs[0].status in ('open', 'unresolved') %}
+<div class="alert warning">{{ icon('scale') }}<div class="grow">The last count of this account ({{ recs[0].counted_minor|money(acc.currency) }}) doesn't match your records by <strong class="num">{{ recs[0].live_difference_minor|money(acc.currency) }}</strong>. <a href="{{ url_for('reconcile.detail', rec_id=recs[0].id) }}">Investigate</a></div></div>
+{% endif %}
+
+<div class="grid dash">
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('history') }} Transaction history</h2><a class="small" href="{{ url_for('transactions.index', account_id=acc.id) }}">Filter &amp; search</a></div>
+    {% if history['items'] %}
+      {{ tx_head(compact=True) }}
+      {% for tx in history['items'] %}{{ tx_row(tx, compact=True) }}{% endfor %}
+      {{ pager(history, 'accounts.detail', {'account_id': acc.id}) }}
+    {% else %}
+      {% call empty('arrow-left-right', 'No transactions on this account', 'Anything you record against it will show up here.') %}{% endcall %}
+    {% endif %}
+  </section>
+  <section class="stack">
+    <div class="card">
+      <div class="card-head"><h2>{{ icon('shield-check') }} Verification history</h2></div>
+      {% if recs %}
+      <ul class="list">
+        {% for r in recs %}
+        <a class="item" href="{{ url_for('reconcile.detail', rec_id=r.id) }}">
+          <span class="grow"><span class="title">{{ r.verified_at|localdt('%d %b %Y') }}</span><br><span class="meta">Counted {{ r.counted_minor|money(acc.currency) }}</span></span>
+          {% if r.difference_minor == 0 %}<span class="badge green">matched</span>
+          {% elif r.status == 'resolved' %}<span class="badge green">resolved</span>
+          {% elif r.status == 'superseded' %}<span class="badge">{{ r.difference_minor|money(acc.currency) }}</span>
+          {% else %}<span class="badge amber">{{ r.live_difference_minor|money(acc.currency) }}</span>{% endif %}
+        </a>
+        {% endfor %}
+      </ul>
+      {% else %}<div class="card-body muted small">No counts yet. Verify this account to compare your records with what you actually hold.</div>{% endif %}
+    </div>
+    {% if not acc.is_archived %}
+    <div class="card card-pad">
+      <h3 style="margin-bottom:.4rem">Archive account</h3>
+      <p class="muted small">Hides it from pickers and totals once it holds nothing. History is always kept.</p>
+      {{ post_button(url_for('accounts.archive', account_id=acc.id), 'Archive', 'btn danger sm', confirm='Archive “' ~ acc.name ~ '”? Its history is kept and you can restore it later.', icon_name='archive') }}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

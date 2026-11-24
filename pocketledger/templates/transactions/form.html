@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}{{ 'Edit transaction' if editing else 'Add transaction' }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('transactions.detail', tx_id=t.id) if editing else (url_for('reconcile.detail', rec_id=recon.id) if recon else url_for('transactions.index')) }}">{{ icon('chevron-left') }} {{ ('Transaction #' ~ t.id) if editing else ('Reconciliation' if recon else 'Transactions') }}</a>
+<div class="page-head"><div><h1>{{ 'Edit transaction' if editing else 'Add transaction' }}</h1>
+  {% if recon %}<div class="sub">Recording a missing transaction for <strong>{{ recon.account_name }}</strong>. It's dated at the time of the count so it can resolve the difference.</div>{% endif %}
+  {% if editing %}<div class="sub">Changing the amount, date, accounts or person voids this transaction and posts a corrected one; both stay in your history.</div>{% endif %}</div></div>
+<div class="card card-pad form-card">
+  <div id="page-form" data-prefill='{{ prefill|tojson|forceescape }}' data-editing="{{ t.id if editing else '' }}"></div>
+  <noscript><p class="alert error">PocketLedger's entry form needs JavaScript.</p></noscript>
+</div>
+{% endblock %}

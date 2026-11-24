@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1110">
+  <title>Offline · PocketLedger</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/favicon-32.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body data-options-url="{{ url_for('api.options') }}" data-create-url="{{ url_for('api.create_transaction') }}" data-login-url="{{ url_for('auth.login') }}" data-offline-page="1" data-home-url="{{ url_for('dashboard.index') }}">
+<div class="auth-wrap" style="align-items:start;padding-top:1.5rem">
+  <div style="width:100%;max-width:520px">
+    <div class="brand" style="justify-content:center;padding-bottom:1rem"><img src="{{ url_for('static', filename='icons/icon-192.png') }}" alt="" style="width:36px;height:36px;border-radius:10px">PocketLedger</div>
+    <div class="alert warning" id="offline-status"><div class="grow"><strong>You're offline.</strong> Balances and history can't be shown without a connection, but you can still record a transaction. It will be held on this device, marked <em>not saved yet</em>, until you're back online and it's confirmed by the server.</div></div>
+    <div class="card card-pad" style="margin-bottom:1rem"><div id="page-form" data-offline="1"></div></div>
+    <div class="card card-pad"><h2 style="margin-bottom:.6rem">Waiting on this device</h2><div id="offline-queue"><p class="muted small">Nothing waiting.</p></div></div>
+    <p class="center" style="margin-top:1rem"><a class="btn" href="{{ url_for('dashboard.index') }}">Try to reconnect</a></p>
+  </div>
+</div>
+<div id="toasts" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='vendor/lucide.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/store.js') }}"></script>
+<script src="{{ url_for('static', filename='js/txform.js') }}"></script>
+</body>
+</html>

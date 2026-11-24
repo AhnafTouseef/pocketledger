@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, csrf %}
+{% block title %}Transaction #{{ t.id }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('transactions.index') }}">{{ icon('chevron-left') }} Transactions</a>
+<div class="page-head">
+  <div>
+    <h1>{{ t.description }} {% if t.status == 'voided' %}<span class="badge red">voided</span>{% endif %}</h1>
+    <div class="sub">{{ t.type_label }} · #{{ t.id }} · {{ t.occurred_at|localdt }}</div>
+  </div>
+  {% if t.status == 'posted' %}<div class="page-actions"><a class="btn" href="{{ url_for('transactions.edit', tx_id=t.id) }}">{{ icon('pencil') }} Edit</a></div>{% endif %}
+</div>
+
+{% if t.status == 'voided' %}
+<div class="alert error">{{ icon('ban') }}<div class="grow"><strong>Voided {{ t.voided_at|localdt }}.</strong> Reason: {{ t.void_reason }}. It no longer affects any balance but remains in your history.
+  {% if replaced_by %} Replaced by <a href="{{ url_for('transactions.detail', tx_id=replaced_by.id) }}">transaction #{{ replaced_by.id }}</a>.{% endif %}</div></div>
+{% endif %}
+{% if replaces %}<div class="alert">{{ icon('replace') }}<div class="grow">This corrects <a href="{{ url_for('transactions.detail', tx_id=replaces.id) }}">transaction #{{ replaces.id }}</a>.</div></div>{% endif %}
+
+<div class="grid cols-2">
+  <section class="card card-pad">
+    <div class="num {{ 'pos' if t.direction > 0 else ('neg' if t.direction < 0 else '') }}" style="font-size:2rem;font-weight:700;margin-bottom:1rem">{{ '+' if t.direction > 0 else ('−' if t.direction < 0 else '') }}{{ t.amount_minor|money(t.currency) }}</div>
+    <dl class="kv">
+      <dt>Type</dt><dd>{{ t.type_label }}</dd>
+      <dt>Date &amp; time</dt><dd>{{ t.occurred_at|localdt }}</dd>
+      {% if t.pre_opening %}<dt>Balance effect</dt><dd>Dated before {{ t.pre_opening|join(' and ') }} was set up, so this is history only and does <strong>not</strong> change {{ 'its' if t.pre_opening|length == 1 else 'their' }} balance (the opening balance already includes it).</dd>{% endif %}
+      {% if t.source_name %}<dt>{{ 'From account' if t.type == 'transfer' else 'Paid from' }}</dt><dd><a href="{{ url_for('accounts.detail', account_id=t.source_account_id) }}">{{ t.source_name }}</a></dd>{% endif %}
+      {% if t.dest_name %}<dt>{{ 'To account' if t.type == 'transfer' else 'Received into' }}</dt><dd><a href="{{ url_for('accounts.detail', account_id=t.dest_account_id) }}">{{ t.dest_name }}</a></dd>{% endif %}
+      {% if t.person_name %}<dt>Person</dt><dd><a href="{{ url_for('people.detail', person_id=t.person_id) }}">{{ t.person_name }}</a></dd>{% endif %}
+      {% if t.category_name %}<dt>Category</dt><dd>{{ t.category_name }}</dd>{% endif %}
+      {% if t.due_date %}<dt>Due date</dt><dd>{{ t.due_date|datefmt }}</dd>{% endif %}
+      <dt>Notes</dt><dd>{{ t.notes or '–' }}</dd>
+      {% if t.reconciliation_id %}<dt>Reconciliation</dt><dd><a href="{{ url_for('reconcile.detail', rec_id=t.reconciliation_id) }}">View the count this relates to</a></dd>{% endif %}
+      <dt>Recorded</dt><dd>{{ t.created_at|localdt }}</dd>
+      <dt>Reference</dt><dd class="muted xs" style="font-family:ui-monospace,monospace">{{ t.uuid }}</dd>
+    </dl>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <div class="card-head"><h2>{{ icon('book-open') }} Ledger entries</h2></div>
+      <div class="card-body">
+        <p class="muted small">Every transaction is posted as balanced debit and credit lines.</p>
+        {% for e in entries %}
+        <div class="row between small" style="padding:.4rem 0;border-top:1px solid var(--border)">
+          <span>{% if e.target_type == 'account' %}{{ e.account_name }} <span class="muted">(account)</span>{% elif e.target_type == 'receivable' %}{{ e.person_name }} <span class="muted">(owes you)</span>{% elif e.target_type == 'payable' %}{{ e.person_name }} <span class="muted">(you owe)</span>{% else %}{{ e.target_type|capitalize }}{% endif %}</span>
+          <span class="num">{% if e.debit_minor %}Dr {{ e.debit_minor|amount(t.currency) }}{% else %}Cr {{ e.credit_minor|amount(t.currency) }}{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if t.status == 'posted' %}
+    <div class="card card-pad">
+      <h3 style="margin-bottom:.3rem">Void this transaction</h3>
+      <p class="muted small">Removes its effect from all balances. Nothing is deleted: the record stays, marked voided, with your reason.</p>
+      <form method="post" action="{{ url_for('transactions.void', tx_id=t.id) }}" data-confirm="Void this transaction? Balances will be updated. This can't be undone, but the record stays in your history.">
+        {{ csrf() }}
+        <div class="field"><label for="reason">Reason</label><input class="input" id="reason" name="reason" required minlength="3" maxlength="200" placeholder="e.g. entered twice"></div>
+        <button class="btn danger" type="submit">{{ icon('ban') }} Void transaction</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>{{ icon('scroll-text') }} Audit trail</h2></div>
+  <ul class="list">
+    {% for h in history %}<li><span class="badge {{ 'red' if h.action == 'void' }}">{{ h.action }}</span><span class="grow small">{{ h.reason or '' }}</span><span class="muted xs">{{ h.created_at|localdt }}</span></li>
+    {% else %}<li class="muted small">No history.</li>{% endfor %}
+  </ul>
+</section>
+{% endblock %}

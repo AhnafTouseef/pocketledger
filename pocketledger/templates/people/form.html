@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon, field, textarea, csrf %}
+{% block title %}{{ 'Edit person' if editing else 'Add person' }}{% endblock %}
+{% block content %}
+<a class="breadcrumb" href="{{ url_for('people.detail', person_id=p.id) if editing else url_for('people.index') }}">{{ icon('chevron-left') }} {{ p.name if editing else 'People' }}</a>
+<div class="page-head"><h1>{{ 'Edit person' if editing else 'Add person' }}</h1></div>
+<form method="post" class="card card-pad form-card">
+  {{ csrf() }}
+  {{ field('Name', 'name', values.get('name'), errors, required=True, attrs='maxlength="80"', autofocus=True) }}
+  {{ field('Contact (optional)', 'contact', values.get('contact'), errors, attrs='maxlength="120" placeholder="Phone, email, address…"') }}
+  {{ textarea('Notes (optional)', 'notes', values.get('notes'), errors) }}
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{{ 'Save' if editing else 'Add person' }}</button>
+    <a class="btn ghost" href="{{ url_for('people.detail', person_id=p.id) if editing else url_for('people.index') }}">Cancel</a>
+  </div>
+  {% if not editing %}<p class="help" style="margin-top:1rem">Tip: you can also create a person while recording a loan. Just type their name in the Person field.</p>{% endif %}
+</form>
+{% endblock %}
