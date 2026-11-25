@@ -51,11 +51,15 @@
     </header>
     <div class="content">
       <div id="offline-banner" class="alert warning hidden">{{ icon('wifi-off') }}<div class="grow"><strong>You're offline.</strong> You can still record transactions; they'll wait on this device (clearly marked as <em>not saved yet</em>) until you're back online.</div></div>
+      {% set note = namespace(text='') %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}
+        {% if undo_offer and category == 'success' %}{% set note.text = message %}{% else %}
         <div class="alert {{ category }}" role="status">{{ icon({'success':'circle-check','error':'circle-alert','warning':'triangle-alert'}.get(category,'info')) }}<div class="grow">{{ message }}</div></div>
+        {% endif %}
         {% endfor %}
       {% endwith %}
+      {% if undo_offer %}<div id="undo-offer" hidden data-token="{{ undo_offer.token }}" data-label="{{ undo_offer.label }}" data-message="{{ note.text or undo_offer.label }}"></div>{% endif %}
       {% block content %}{% endblock %}
     </div>
   </div>

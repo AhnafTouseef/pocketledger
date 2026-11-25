@@ -87,7 +87,7 @@ def balance_sheet_series(conn, buckets, currency):
     tz = settings_svc.tzname(conn)
     events = []  # (utc_iso, accounts_delta, receivable_delta, payable_delta)
     since = {}  # account id -> opening moment; legs dated before it are already inside the opening balance
-    for a in conn.execute("SELECT id, opening_balance_minor, opened_on, opening_at FROM accounts WHERE currency = ?", (currency,)):
+    for a in conn.execute("SELECT id, opening_balance_minor, opened_on, opening_at FROM accounts WHERE currency = ? AND deleted_at IS NULL", (currency,)):
         since[a["id"]] = a["opening_at"] or day_start_utc(parse_date(a["opened_on"]), tz)
         events.append((since[a["id"]], a["opening_balance_minor"], 0, 0))
     for e in conn.execute(
@@ -96,7 +96,7 @@ def balance_sheet_series(conn, buckets, currency):
     ):
         d = e["debit_minor"] - e["credit_minor"]
         if e["target_type"] == "account":
-            if e["occurred_at"] >= since.get(e["account_id"], ""):
+            if e["account_id"] in since and e["occurred_at"] >= since[e["account_id"]]:
                 events.append((e["occurred_at"], d, 0, 0))
         elif e["target_type"] == "receivable":
             events.append((e["occurred_at"], 0, d, 0))

@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from '_macros.html' import icon, csrf %}
+{% from '_macros.html' import icon, csrf, post_button %}
 {% block title %}Transaction #{{ t.id }}{% endblock %}
 {% block content %}
 <a class="breadcrumb" href="{{ url_for('transactions.index') }}">{{ icon('chevron-left') }} Transactions</a>
@@ -52,13 +52,9 @@
 
     {% if t.status == 'posted' %}
     <div class="card card-pad">
-      <h3 style="margin-bottom:.3rem">Void this transaction</h3>
-      <p class="muted small">Removes its effect from all balances. Nothing is deleted: the record stays, marked voided, with your reason.</p>
-      <form method="post" action="{{ url_for('transactions.void', tx_id=t.id) }}" data-confirm="Void this transaction? Balances will be updated. This can't be undone, but the record stays in your history.">
-        {{ csrf() }}
-        <div class="field"><label for="reason">Reason</label><input class="input" id="reason" name="reason" required minlength="3" maxlength="200" placeholder="e.g. entered twice"></div>
-        <button class="btn danger" type="submit">{{ icon('ban') }} Void transaction</button>
-      </form>
+      <h3 style="margin-bottom:.3rem">Delete this record</h3>
+      <p class="muted small">Removes it from your balances and history. Deleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation. You can undo right after.</p>
+      {{ post_button(url_for('transactions.delete', tx_id=t.id), 'Delete', 'btn danger', confirm='Delete “' ~ t.description ~ '” (' ~ (t.amount_minor|money(t.currency)) ~ ')?\n\nDeleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation.', icon_name='trash-2') }}
     </div>
     {% endif %}
   </section>

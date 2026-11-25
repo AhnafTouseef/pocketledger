@@ -59,13 +59,16 @@
       </ul>
       {% else %}<div class="card-body muted small">No counts yet. Verify this account to compare your records with what you actually hold.</div>{% endif %}
     </div>
-    {% if not acc.is_archived %}
     <div class="card card-pad">
-      <h3 style="margin-bottom:.4rem">Archive account</h3>
-      <p class="muted small">Hides it from pickers and totals once it holds nothing. History is always kept.</p>
-      {{ post_button(url_for('accounts.archive', account_id=acc.id), 'Archive', 'btn danger sm', confirm='Archive “' ~ acc.name ~ '”? Its history is kept and you can restore it later.', icon_name='archive') }}
+      <h3 style="margin-bottom:.4rem">Delete account</h3>
+      <p class="muted small">Works whatever it holds. No money is moved and no other account is changed. Deleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation. You can undo right after.</p>
+      {% set own = summary.own_count %}{% set kept = summary.kept_count %}
+      {% set msg = 'Delete the account “' ~ acc.name ~ '”?\n\nRecorded balance: ' ~ (acc.balance_minor|money(acc.currency)) ~ '\n'
+         ~ ((own ~ ' income, expense or adjustment record' ~ ('' if own == 1 else 's') ~ ' on this account will be deleted with it.') if own else 'No income, expense or adjustment records are tied to it.')
+         ~ (('\n' ~ kept ~ ' transfer or loan record' ~ ('' if kept == 1 else 's') ~ ' will stay and show this account as deleted.') if kept else '')
+         ~ '\n\nDeleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation.' %}
+      {{ post_button(url_for('accounts.delete', account_id=acc.id), 'Delete account', 'btn danger sm', confirm=msg, icon_name='trash-2') }}
     </div>
-    {% endif %}
   </section>
 </div>
 {% endblock %}

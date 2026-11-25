@@ -22,7 +22,7 @@ def verify(conn, account_id, counted, note=None) -> int:
         raise ValidationError("Notes are limited to 500 characters.", "note")
     with transaction(conn):
         acc = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        if acc is None:
+        if acc is None or acc["deleted_at"]:
             raise NotFoundError("Account not found.")
         if acc["is_archived"]:
             raise ValidationError("Archived accounts can't be verified.", "account_id")
@@ -86,7 +86,7 @@ def _describe(conn, rec, latest):
 
 
 _JOIN = ("SELECT r.*, a.name AS account_name, a.currency AS currency, c.kind AS category_kind "
-         "FROM reconciliations r JOIN accounts a ON a.id = r.account_id "
+         "FROM reconciliations r JOIN accounts a ON a.id = r.account_id AND a.deleted_at IS NULL "
          "JOIN account_categories c ON c.id = a.category_id")
 
 
@@ -209,6 +209,8 @@ def post_adjustment(conn, rec_id, note=None):
         if live == 0:
             raise ValidationError("Nothing to adjust: the books already match the counted amount.")
         acc = conn.execute("SELECT * FROM accounts WHERE id = ?", (rec["account_id"],)).fetchone()
+        if acc["deleted_at"]:
+            raise NotFoundError("Account not found.")
         if acc["is_archived"]:
             raise ValidationError("This account is archived.")
         cur = settings_svc.get_currency(conn, acc["currency"])

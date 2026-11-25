@@ -6,11 +6,11 @@ produce a duplicate.
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, url_for
 
 from ..db import get_db
 from ..money import format_money
-from ..services import accounts as accounts_svc, categories, ledger, people as people_svc, settings as settings_svc
+from ..services import accounts as accounts_svc, categories, ledger, people as people_svc, settings as settings_svc, undo as undo_svc
 from ..services.errors import ConflictError, NotFoundError, ServiceError
 from ..timeutil import local_date, today_local, utc_iso_to_local, utcnow_iso
 
@@ -75,6 +75,7 @@ def create_transaction():
     cur = dict(settings_svc.get_currency(conn, t["currency"]))
     return jsonify(
         ok=True, id=res.id, uuid=res.uuid, created=res.created, warnings=res.warnings,
+        undo=undo_svc.take_last() if res.created else None,
         message=f"{ledger.TYPE_LABELS[t['type']]} of {format_money(t['amount_minor'], cur)} saved."
         if res.created else "Already saved earlier; nothing was duplicated.",
     ), (201 if res.created else 200)
@@ -100,11 +101,25 @@ def update_transaction(tx_id):
     except ServiceError as exc:
         return _error(exc)
     messages = {
-        "updated": "Details updated. The change is in the audit trail.",
-        "replaced": "Corrected. The original was voided and a replacement posted, both kept in history.",
+        "updated": "Details updated.",
+        "replaced": "Changes saved.",
         "unchanged": "Nothing changed.",
     }
-    return jsonify(ok=True, id=new_id, kind=kind, message=messages[kind])
+    return jsonify(ok=True, id=new_id, kind=kind, message=messages[kind], undo=undo_svc.take_last())
+
+
+@bp.route("/undo/<token>", methods=["POST"])
+def undo_action(token):
+    """Reverse one earlier action completely, once. Refused (and nothing changed) if the records
+    involved were changed afterwards."""
+    try:
+        label, restore = undo_svc.undo(get_db(), token)
+    except NotFoundError as exc:
+        return jsonify(error=exc.message), 404
+    except ConflictError as exc:
+        return jsonify(error=exc.message), 409
+    target = url_for(restore[0], **restore[1]) if restore else url_for("dashboard.index")
+    return jsonify(ok=True, message=f"Undone: {label}", redirect=target)
 
 
 @bp.route("/ping")

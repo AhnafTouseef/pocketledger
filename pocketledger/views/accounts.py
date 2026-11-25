@@ -62,7 +62,8 @@ def detail(account_id):
     history = tx_svc.search(conn, {"account_id": account_id}, page=page, per_page=25)
     recs = reconciliation.list_reconciliations(conn, account_id=account_id, limit=10)
     cur = settings_svc.get_currency(conn, acc["currency"])
-    return render_template("accounts/detail.html", acc=acc, history=history, recs=recs, cur=cur)
+    return render_template("accounts/detail.html", acc=acc, history=history, recs=recs, cur=cur,
+                           summary=svc.deletion_summary(conn, account_id))
 
 
 @bp.route("/<int:account_id>/edit", methods=["GET", "POST"])
@@ -100,16 +101,17 @@ def edit(account_id):
     )
 
 
-@bp.route("/<int:account_id>/archive", methods=["POST"])
-def archive(account_id):
+@bp.route("/<int:account_id>/delete", methods=["POST"])
+def delete(account_id):
     try:
-        svc.archive_account(get_db(), account_id)
-        flash("Account archived. Its history is kept.", "success")
+        svc.delete_account(get_db(), account_id)
+        flash("Account deleted.", "success")
     except NotFoundError:
         abort(404)
     except ServiceError as exc:
         flash(exc.message, "error")
-    return redirect(url_for("accounts.detail", account_id=account_id))
+        return redirect(url_for("accounts.detail", account_id=account_id))
+    return redirect(url_for("accounts.index"))
 
 
 @bp.route("/<int:account_id>/unarchive", methods=["POST"])

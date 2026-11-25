@@ -55,7 +55,7 @@ def detail(person_id):
     loans_pay = svc.loan_breakdown(conn, person_id, "payable")
     history = tx_svc.search(conn, {"person_id": person_id}, page=to_int(request.args.get("page"), 1), per_page=30)
     return render_template("people/detail.html", p=person, loans_recv=loans_recv, loans_pay=loans_pay,
-                           history=history, today=today)
+                           history=history, today=today, summary=svc.deletion_summary(conn, person_id))
 
 
 @bp.route("/<int:person_id>/edit", methods=["GET", "POST"])
@@ -79,16 +79,17 @@ def edit(person_id):
     return render_template("people/form.html", values=values, errors=errors, editing=True, p=person)
 
 
-@bp.route("/<int:person_id>/archive", methods=["POST"])
-def archive(person_id):
+@bp.route("/<int:person_id>/delete", methods=["POST"])
+def delete(person_id):
     try:
-        svc.archive_person(get_db(), person_id)
-        flash("Archived. Their history is kept.", "success")
+        svc.delete_person(get_db(), person_id)
+        flash("Person deleted.", "success")
     except NotFoundError:
         abort(404)
     except ServiceError as exc:
         flash(exc.message, "error")
-    return redirect(url_for("people.detail", person_id=person_id))
+        return redirect(url_for("people.detail", person_id=person_id))
+    return redirect(url_for("people.index"))
 
 
 @bp.route("/<int:person_id>/unarchive", methods=["POST"])

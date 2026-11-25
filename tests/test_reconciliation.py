@@ -1,7 +1,7 @@
 import pytest
 
 from pocketledger.services import accounts as accounts_svc, ledger, reconciliation as rec
-from pocketledger.services.errors import ValidationError
+from pocketledger.services.errors import NotFoundError, ValidationError
 
 
 def post(conn, **kw):
@@ -89,13 +89,13 @@ def test_history_is_preserved_and_latest_count_wins(conn, ids):
         conn.execute("DELETE FROM reconciliations WHERE id = ?", (first,))
 
 
-def test_invalid_counts_rejected_and_archived_accounts_refused(conn, ids):
+def test_invalid_counts_rejected_and_deleted_accounts_refused(conn, ids):
     for bad in ("", "abc", "-5"):
         with pytest.raises(ValidationError):
             rec.verify(conn, ids["pocket"], bad)
     empty = accounts_svc.create_account(conn, name="Old", category_id=1, currency="BDT", opening_balance="0")
-    accounts_svc.archive_account(conn, empty)
-    with pytest.raises(ValidationError):
+    accounts_svc.delete_account(conn, empty)
+    with pytest.raises((ValidationError, NotFoundError)):
         rec.verify(conn, empty, "0")
 
 

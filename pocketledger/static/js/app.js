@@ -77,6 +77,45 @@
     setTimeout(() => el.remove(), ms || (kind === 'error' || kind === 'warning' ? 7000 : 4000));
   };
 
+  /* ---------- undo toast ---------- */
+  /* One Undo offer per action. The server keeps the reversible steps; this only asks it to apply them. */
+  PL.undoToast = (offer, message) => {
+    if (!offer || !offer.token) return;
+    let host = $('#toasts');
+    if (!host) { host = document.createElement('div'); host.id = 'toasts'; document.body.appendChild(host); }
+    const el = document.createElement('div');
+    el.className = 'toast success'; el.setAttribute('role', 'status');
+    el.innerHTML = PL.icon('circle-check') + '<div class="grow"></div><button type="button" class="btn sm ghost toast-undo">' + PL.icon('undo-2') + ' Undo</button>';
+    el.children[1].textContent = message || offer.label || 'Done.';
+    host.appendChild(el); PL.icons();
+    const btn = el.querySelector('.toast-undo');
+    let timer = setTimeout(() => el.remove(), 10000);
+    btn.addEventListener('click', async () => {
+      clearTimeout(timer); btn.disabled = true;
+      try {
+        const res = await fetch('/api/undo/' + encodeURIComponent(offer.token), { method: 'POST', credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'X-CSRFToken': PL.csrf() } });
+        let data = {}; try { data = await res.json(); } catch (e) { /* not JSON */ }
+        if (res.ok && data.ok) { PL.undoLater(null); try { sessionStorage.setItem('pl_flash', data.message || 'Undone.'); } catch (e) { /* ignore */ } location.assign(data.redirect || '/'); return; }
+        el.remove(); PL.toast(data.error || 'Could not undo this. Nothing was changed.', 'error', 8000);
+      } catch (e) { el.remove(); PL.toast('Could not reach the server. Nothing was changed.', 'error'); }
+    });
+  };
+  /** Remember an offer across the page change that usually follows a save. */
+  PL.undoLater = (offer, message) => {
+    try { if (offer && offer.token) sessionStorage.setItem('pl_undo', JSON.stringify({ offer, message })); else sessionStorage.removeItem('pl_undo'); } catch (e) { /* ignore */ }
+  };
+  PL.showPending = () => {
+    try {
+      const flash = sessionStorage.getItem('pl_flash');
+      if (flash) { sessionStorage.removeItem('pl_flash'); PL.toast(flash, 'success'); }
+      const raw = sessionStorage.getItem('pl_undo');
+      if (raw) { sessionStorage.removeItem('pl_undo'); const v = JSON.parse(raw); PL.undoToast(v.offer, v.message); }
+    } catch (e) { /* ignore */ }
+    const srv = document.getElementById('undo-offer');
+    if (srv) PL.undoToast({ token: srv.dataset.token, label: srv.dataset.label }, srv.dataset.message);
+  };
+
   /* ---------- overlays & confirm dialog ---------- */
   PL.overlay = (contentEl, opts) => {
     opts = opts || {};
@@ -133,6 +172,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     PL.icons();
+    PL.showPending();
     // "More" sheet on mobile
     const more = $('#more-sheet');
     if (more) {

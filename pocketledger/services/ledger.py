@@ -18,8 +18,9 @@ Assets (accounts, receivables) grow with debits; liabilities (payables) grow wit
 Hence Net worth = assets - liabilities is untouched by transfers, lending, borrowing and
 repayments, and changes only through income, expenses and adjustments.
 
-Rows are immutable. "Editing" a financial field voids the original and posts a replacement
-linked to it; both are recorded in the audit log. Nothing is ever deleted.
+Ledger rows never change in place. "Editing" a financial field voids the original and posts a
+replacement linked to it. Deleting is a soft delete (see services/undo.py), so every action can be
+undone; deleted records are erased for good after a retention period.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from ..db import transaction
 from ..money import MAX_MINOR, MoneyError, format_money, parse_amount
 from ..timeutil import UTC_FMT, is_valid_utc_iso, local_input_to_utc_iso, parse_date, utcnow, utcnow_iso
-from . import audit, settings as settings_svc
+from . import audit, settings as settings_svc, undo
 from .errors import NotFoundError, ValidationError
 
 TX_TYPES = (
@@ -112,7 +113,7 @@ def _to_int(raw, field, message):
 def _load_account(conn, raw, field, message, keep_ids):
     aid = _to_int(raw, field, message)
     row = conn.execute("SELECT * FROM accounts WHERE id = ?", (aid,)).fetchone()
-    if row is None:
+    if row is None or (row["deleted_at"] and aid not in keep_ids):
         raise ValidationError("That account doesn't exist.", field)
     if row["is_archived"] and aid not in keep_ids:
         raise ValidationError(f"“{row['name']}” is archived. Choose an active account.", field)
@@ -188,7 +189,7 @@ def prepare(conn, data, *, keep_account_ids=(), keep_person_ids=()):
     if tx_type in NEEDS_PERSON:
         pid = _to_int(data.get("person_id"), "person_id", "Choose a person.")
         person = conn.execute("SELECT * FROM people WHERE id = ?", (pid,)).fetchone()
-        if person is None:
+        if person is None or (person["deleted_at"] and pid not in keep_person_ids):
             raise ValidationError("That person doesn't exist.", "person_id")
         if person["is_archived"] and pid not in keep_person_ids:
             raise ValidationError(f"“{person['name']}” is archived.", "person_id")
@@ -287,7 +288,7 @@ def _resolve_new_person(conn, data):
         return
     if len(name) > 80:
         raise ValidationError("Names are limited to 80 characters.", "new_person_name")
-    row = conn.execute("SELECT id FROM people WHERE name = ? AND is_archived = 0", (name,)).fetchone()
+    row = conn.execute("SELECT id FROM people WHERE name = ? AND is_archived = 0 AND deleted_at IS NULL", (name,)).fetchone()
     if row is not None:
         data["person_id"] = row["id"]
         return
@@ -296,6 +297,8 @@ def _resolve_new_person(conn, data):
         "INSERT INTO people (name, created_at, updated_at) VALUES (?, ?, ?)", (name, now, now)
     )
     data["person_id"] = cur.lastrowid
+    if undo.current():
+        undo.current().created("people", cur.lastrowid)
     audit.log(conn, "create", "person", cur.lastrowid, after={"name": name, "via": "quick transaction"})
 
 
@@ -321,20 +324,6 @@ def _check_repayment_limit(conn, c):
         else:
             msg = f"You owe {who} {fmt}, so a larger repayment can't be recorded. Record the extra as a new loan to them if that's what happened."
         raise ValidationError(msg, "amount")
-
-
-def _assert_people_consistent(conn, person_ids):
-    """After a void/replace, nobody's outstanding balance may go negative."""
-    for pid in {p for p in person_ids if p is not None}:
-        for r in conn.execute(
-            "SELECT b.currency, b.receivable_minor, b.payable_minor, p.name FROM v_person_balances b "
-            "JOIN people p ON p.id = b.person_id WHERE b.person_id = ?", (pid,)
-        ):
-            if r["receivable_minor"] < 0 or r["payable_minor"] < 0:
-                raise ValidationError(
-                    f"That change would leave {r['name']}'s balance negative, because later repayments "
-                    "depend on it. Void or correct those repayments first.",
-                )
 
 
 def _insert_transaction(conn, c, *, replaces_id=None):
@@ -387,7 +376,7 @@ def _duplicate_warnings(conn, c, new_id):
         ),
     ).fetchone()
     if row[0]:
-        return ["An identical transaction was recorded in the last two minutes. If this was a double tap, void one of them."]
+        return ["An identical transaction was recorded in the last two minutes. If this was a double tap, delete one of them."]
     return []
 
 
@@ -397,7 +386,7 @@ def post_transaction(conn, data, *, replaces_id=None) -> PostResult:
     supplied = data.get("uuid")
     if supplied not in (None, "") and not (isinstance(supplied, str) and _UUID_RE.match(supplied)):
         raise ValidationError("Invalid transaction id.", "uuid")
-    with transaction(conn):
+    with transaction(conn), undo.group(conn, "Added transaction", ("transactions.index", {})) as grp:
         if supplied:
             existing = conn.execute("SELECT id, uuid FROM transactions WHERE uuid = ?", (supplied.lower(),)).fetchone()
             if existing is not None:
@@ -406,48 +395,61 @@ def post_transaction(conn, data, *, replaces_id=None) -> PostResult:
         c = prepare(conn, data)
         _check_repayment_limit(conn, c)
         tx_id = _insert_transaction(conn, c, replaces_id=replaces_id)
+        grp.created("transactions", tx_id)
+        grp.label = f"Added “{c['description']}”"
         audit.log(conn, "create", "transaction", tx_id, after=snapshot(conn, tx_id))
         warnings = _duplicate_warnings(conn, c, tx_id)
     return PostResult(tx_id, c["uuid"], True, warnings)
 
 
 # --------------------------------------------------------------------------------------
-# Corrections: void / edit (never destructive)
+# Delete / edit (every action is undoable, see services/undo.py)
 # --------------------------------------------------------------------------------------
-def _get_posted(conn, tx_id):
+def _get_live(conn, tx_id):
     row = conn.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
-    if row is None:
+    if row is None or row["deleted_at"]:
         raise NotFoundError("Transaction not found.")
     if row["status"] == "voided":
-        raise ValidationError("This transaction has already been voided.")
+        raise ValidationError("This transaction was replaced by a correction and can't be changed any more.")
     return row
 
 
 def _void_row(conn, row, reason):
+    ts = utcnow_iso()
     conn.execute(
         "UPDATE transactions SET status = 'voided', voided_at = ?, void_reason = ? WHERE id = ?",
-        (utcnow_iso(), reason, row["id"]),
+        (ts, reason, row["id"]),
     )
+    return ts
 
 
-def void_transaction(conn, tx_id, reason):
-    reason = (reason or "").strip()
-    if len(reason) < 3:
-        raise ValidationError("Give a short reason for voiding this transaction.", "reason")
-    with transaction(conn):
-        row = _get_posted(conn, tx_id)
-        before = dict(row)
-        _void_row(conn, row, reason)
-        _assert_people_consistent(conn, [row["person_id"]])
-        audit.log(conn, "void", "transaction", tx_id, before=before, after=snapshot(conn, tx_id), reason=reason)
+def soft_delete_transaction(conn, tx_id, grp, now=None):
+    """Mark one transaction deleted (voided + deleted_at) and record the step for Undo."""
+    now = now or utcnow_iso()
+    cols = undo.tx_deleted_cols(now)
+    conn.execute(
+        "UPDATE transactions SET status = 'voided', voided_at = ?, void_reason = 'Deleted', deleted_at = ? "
+        "WHERE id = ? AND status = 'posted' AND deleted_at IS NULL", (now, now, tx_id))
+    grp.changed("transactions", tx_id, {c: v[0] for c, v in cols.items()}, {c: v[1] for c, v in cols.items()})
+
+
+def delete_transaction(conn, tx_id):
+    """Delete any transaction. Loans don't need to be settled first: PocketLedger only keeps the
+    user's own records, so removing one never touches real money or real obligations."""
+    with transaction(conn), undo.group(conn, "Deleted transaction", ("transactions.detail", {"tx_id": tx_id})) as grp:
+        row = _get_live(conn, tx_id)
+        soft_delete_transaction(conn, tx_id, grp)
+        grp.label = f"Deleted “{row['description']}”"
+        audit.log(conn, "delete", "transaction", tx_id)
+    return row["description"]
 
 
 def edit_transaction(conn, tx_id, data, reason=None):
     """Apply an edit. Returns (transaction_id, kind) where kind is 'updated' (non-financial
     fields changed in place) or 'replaced' (original voided, new transaction posted)."""
     data = dict(data)
-    with transaction(conn):
-        old = _get_posted(conn, tx_id)
+    with transaction(conn), undo.group(conn, "Edited transaction", ("transactions.detail", {"tx_id": tx_id})) as grp:
+        old = _get_live(conn, tx_id)
         _resolve_new_person(conn, data)
         data["uuid"] = None  # a replacement gets its own identity
         keep_acc = {a for a in (old["source_account_id"], old["dest_account_id"]) if a is not None}
@@ -455,6 +457,7 @@ def edit_transaction(conn, tx_id, data, reason=None):
         c = prepare(conn, data, keep_account_ids=keep_acc, keep_person_ids=keep_ppl)
         changed = [f for f in FINANCIAL_FIELDS if old[f] != c[f]]
         before = dict(old)
+        grp.label = f"Edited “{old['description']}”"
         if not changed:
             if c["description"] == old["description"] and c["notes"] == old["notes"] \
                     and c["category_id"] == old["category_id"] and c["due_date"] == old["due_date"]:
@@ -463,12 +466,15 @@ def edit_transaction(conn, tx_id, data, reason=None):
                 "UPDATE transactions SET description = ?, notes = ?, category_id = ?, due_date = ? WHERE id = ?",
                 (c["description"], c["notes"], c["category_id"], c["due_date"], tx_id),
             )
+            fields = ("description", "notes", "category_id", "due_date")
+            grp.changed("transactions", tx_id, {f: old[f] for f in fields}, {f: c[f] for f in fields})
             audit.log(conn, "update", "transaction", tx_id, before=before, after=snapshot(conn, tx_id),
                       reason=(reason or "").strip() or None)
             return tx_id, "updated"
 
         reason = (reason or "").strip() or "Corrected"
-        _void_row(conn, old, f"Replaced by correction: {reason}")
+        void_reason = f"Replaced by correction: {reason}"
+        voided_at = _void_row(conn, old, void_reason)
         c["reconciliation_id"] = None
         if old["reconciliation_id"]:
             rec = conn.execute("SELECT account_id FROM reconciliations WHERE id = ?", (old["reconciliation_id"],)).fetchone()
@@ -477,7 +483,11 @@ def edit_transaction(conn, tx_id, data, reason=None):
         _check_repayment_limit(conn, c)
         new_id = _insert_transaction(conn, c, replaces_id=tx_id)
         conn.execute("UPDATE transactions SET replaced_by_id = ? WHERE id = ?", (new_id, tx_id))
-        _assert_people_consistent(conn, [old["person_id"], c["person_id"]])
+        # Undo order matters (steps are reversed): the replacement is removed first, then the original returns.
+        grp.changed("transactions", tx_id,
+                    {"status": "posted", "voided_at": None, "void_reason": None, "replaced_by_id": None},
+                    {"status": "voided", "voided_at": voided_at, "void_reason": void_reason, "replaced_by_id": new_id})
+        grp.created("transactions", new_id)
         audit.log(conn, "correct", "transaction", tx_id, before=before, after=snapshot(conn, new_id),
                   reason=reason)
         audit.log(conn, "create", "transaction", new_id, after=snapshot(conn, new_id),
@@ -535,7 +545,7 @@ def verify_integrity(conn):
     """Independent audit of the whole ledger. Returns a list of problems (empty == healthy).
 
     Checks: SQLite integrity + foreign keys; every transaction's entries balance and match
-    the accounting rule for its type exactly; no negative person balances; and the
+    the accounting rule for its type exactly; and the
     net-worth identity  assets - liabilities == opening balances + income - expenses + adjustments
     (minus any account legs dated before that account's opening moment, which its balance ignores).
     """
@@ -564,15 +574,13 @@ def verify_integrity(conn):
             if conn.execute("SELECT 1 FROM transactions WHERE id = ?", (t["replaced_by_id"],)).fetchone() is None:
                 issues.append(f"Transaction #{t['id']} points to a missing replacement.")
 
-    for r in conn.execute(
-        "SELECT b.person_id, b.currency, b.receivable_minor, b.payable_minor, p.name FROM v_person_balances b "
-        "JOIN people p ON p.id = b.person_id"
-    ):
-        if r["receivable_minor"] < 0 or r["payable_minor"] < 0:
-            issues.append(f"{r['name']} has a negative outstanding balance.")
-
     for cur in [r[0] for r in conn.execute("SELECT code FROM currencies")]:
         t = totals(conn, cur)
+        # Deleted accounts are hidden from the totals, but their legs still sit in surviving transfers
+        # and loans, so the identity is checked over every account and the hidden part is added back.
+        hidden = conn.execute(
+            "SELECT COALESCE(SUM(b.balance_minor), 0) FROM v_account_balances_all b JOIN accounts a ON a.id = b.account_id "
+            "WHERE a.currency = ? AND a.deleted_at IS NOT NULL", (cur,)).fetchone()[0]
         opening = conn.execute(
             "SELECT COALESCE(SUM(opening_balance_minor), 0) FROM accounts WHERE currency = ?", (cur,)
         ).fetchone()[0]
@@ -590,7 +598,7 @@ def verify_integrity(conn):
             (cur,),
         ).fetchone()[0]
         expected = opening + flows - skipped
-        if t["net_worth_minor"] != expected:
+        if t["net_worth_minor"] + hidden != expected:
             issues.append(
                 f"Net worth identity broken for {cur}: assets - liabilities = {t['net_worth_minor']}, "
                 f"but opening balances + income - expenses + adjustments (+ pre-opening history) = {expected}."

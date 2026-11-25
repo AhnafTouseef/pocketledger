@@ -15,6 +15,7 @@ SORTS = {"date": "t.occurred_at", "amount": "t.amount_minor", "created": "t.crea
 _SELECT = """
 SELECT t.*, s.name AS source_name, d.name AS dest_name, p.name AS person_name,
        COALESCE(s.opening_at, s.opened_on) AS source_since, COALESCE(d.opening_at, d.opened_on) AS dest_since,
+       s.deleted_at AS source_deleted, d.deleted_at AS dest_deleted,
        c.name AS category_name, cur.symbol AS currency_symbol
 FROM transactions t
 LEFT JOIN accounts s ON s.id = t.source_account_id
@@ -38,7 +39,7 @@ def _intval(v):
 
 def _build_where(conn, f):
     tz = settings_svc.tzname(conn)
-    where, params = [], []
+    where, params = ["t.deleted_at IS NULL"], []     # deleted records never show up anywhere
     status = f.get("status") or "posted"
     if status in ("posted", "voided"):
         where.append("t.status = ?")
@@ -122,21 +123,26 @@ def decorate(t, focus_account_id=None):
     t["direction"] = flow_direction(t["type"], t["source_account_id"] is not None, t["dest_account_id"] is not None)
     if focus_account_id and t["type"] == "transfer":
         t["direction"] = 1 if t["dest_account_id"] == focus_account_id else -1
-    if t["type"] == "transfer":
-        t["account_label"] = f"{t['source_name']} → {t['dest_name']}"
-    else:
-        t["account_label"] = t["source_name"] or t["dest_name"]
     # Accounts whose balance this transaction does NOT touch because it is dated before they were opened.
     t["pre_opening"] = [
         name for name, since in ((t.get("source_name"), t.get("source_since")), (t.get("dest_name"), t.get("dest_since")))
         if name and since and t["occurred_at"] < since
     ]
+    # An account that was deleted stays visible, by name, on the transfers and loans that involved it.
+    if t.get("source_deleted") and t.get("source_name"):
+        t["source_name"] += " (deleted)"
+    if t.get("dest_deleted") and t.get("dest_name"):
+        t["dest_name"] += " (deleted)"
+    if t["type"] == "transfer":
+        t["account_label"] = f"{t['source_name']} → {t['dest_name']}"
+    else:
+        t["account_label"] = t["source_name"] or t["dest_name"]
     return t
 
 
 def get_transaction(conn, tx_id):
     row = conn.execute(f"{_SELECT} WHERE t.id = ?", (tx_id,)).fetchone()
-    if row is None:
+    if row is None or row["deleted_at"]:
         raise NotFoundError("Transaction not found.")
     return decorate(dict(row))
 

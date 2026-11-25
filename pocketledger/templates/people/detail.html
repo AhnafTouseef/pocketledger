@@ -21,6 +21,7 @@
     <div class="label">{{ icon('hand-coins') }} {{ p.name }} owes you</div>
     <div class="value num">{{ p.receivable_minor|money }}</div>
     <div class="hint">Lent {{ p.lent_minor|money }} · repaid {{ p.received_back_minor|money }}</div>
+    {% if p.receivable_minor < 0 %}<div class="hint warn">Repayments you kept add up to {{ (-p.receivable_minor)|money }} more than the loans you kept. Nothing is wrong; this is just what is recorded.</div>{% endif %}
     {% if not p.is_archived %}<div class="btn-group" style="margin-top:.8rem">
       <a class="btn sm" href="{{ url_for('transactions.new', type='lent', person_id=p.id) }}">{{ icon('hand-coins') }} Lend more</a>
       {% if p.receivable_minor %}<a class="btn sm primary" href="{{ url_for('transactions.new', type='repayment_received', person_id=p.id) }}">{{ icon('undo-2') }} Record repayment</a>{% endif %}
@@ -68,7 +69,7 @@
   {% endif %}
 </section>
 
-{% if not p.is_archived and not p.receivable_minor and not p.payable_minor %}
-<div class="card card-pad" style="margin-top:1rem"><h3 style="margin-bottom:.4rem">Archive person</h3><p class="muted small">Hide them from pickers. Allowed once nothing is outstanding; history is kept.</p>{{ post_button(url_for('people.archive', person_id=p.id), 'Archive', 'btn danger sm', confirm='Archive ' ~ p.name ~ '?', icon_name='archive') }}</div>
-{% endif %}
+{% set n = summary.record_count %}
+{% set msg = 'Delete ' ~ p.name ~ '?\n\n' ~ ((n ~ ' lending, borrowing or repayment record' ~ ('' if n == 1 else 's') ~ ' will be deleted with them.') if n else 'They have no records.') ~ '\n\nDeleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation.' %}
+<div class="card card-pad" style="margin-top:1rem"><h3 style="margin-bottom:.4rem">Delete person</h3><p class="muted small">Settled or not. Their lending, borrowing and repayment records are deleted with them; no account balance is touched. Deleting only removes this information from PocketLedger. It does not change any real money or any real-world debt or obligation. You can undo right after.</p>{{ post_button(url_for('people.delete', person_id=p.id), 'Delete person', 'btn danger sm', confirm=msg, icon_name='trash-2') }}</div>
 {% endblock %}

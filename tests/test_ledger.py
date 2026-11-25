@@ -125,16 +125,20 @@ def test_future_and_ancient_dates_rejected(conn, ids):
         post(conn, type="expense", source_account_id=ids["pocket"], amount="1", occurred_at="1999-01-01T00:00:00Z")
 
 
-def test_archived_accounts_cannot_receive_new_transactions(conn, ids):
+def test_deleted_accounts_cannot_receive_new_transactions(conn, ids):
     empty = accounts_svc.create_account(conn, name="Empty", category_id=1, currency="BDT", opening_balance="0")
-    accounts_svc.archive_account(conn, empty)
-    with pytest.raises(ValidationError, match="archived"):
+    accounts_svc.delete_account(conn, empty)
+    with pytest.raises(ValidationError, match="doesn't exist"):
         post(conn, type="income", dest_account_id=empty, amount="5")
 
 
-def test_cannot_archive_account_holding_money(conn, ids):
-    with pytest.raises(ValidationError, match="still holds"):
-        accounts_svc.archive_account(conn, ids["pocket"])
+def test_account_holding_money_can_be_deleted_and_nothing_else_moves(conn, ids):
+    bank_before = ledger.account_balance(conn, ids["bank"])
+    name = accounts_svc.delete_account(conn, ids["pocket"])
+    assert name == "Pocket"
+    assert ledger.account_balance(conn, ids["bank"]) == bank_before          # no balance was moved anywhere
+    assert ids["pocket"] not in {a["id"] for a in accounts_svc.list_accounts(conn)}
+    assert ledger.verify_integrity(conn) == []
 
 
 def test_category_must_match_type(conn, ids):
@@ -213,26 +217,25 @@ def test_database_rejects_unbalanced_or_wrong_shape_rows(conn, ids):
                      " VALUES ('u2','income',0,'BDT','2026-01-01T00:00:00Z',2,'x','2026-01-01T00:00:00Z')")
 
 
-def test_void_reverts_balances_keeps_record_and_audits(conn, ids):
+def test_delete_removes_effect_and_is_audited(conn, ids):
     r = post(conn, type="expense", source_account_id=ids["pocket"], amount="300")
-    ledger.void_transaction(conn, r.id, "entered twice")
+    assert ledger.account_balance(conn, ids["pocket"]) == 170000
+    desc = ledger.delete_transaction(conn, r.id)
+    assert desc
     assert ledger.account_balance(conn, ids["pocket"]) == 200000
-    row = conn.execute("SELECT status, void_reason FROM transactions WHERE id = ?", (r.id,)).fetchone()
-    assert (row["status"], row["void_reason"]) == ("voided", "entered twice")
+    row = conn.execute("SELECT status, deleted_at FROM transactions WHERE id = ?", (r.id,)).fetchone()
+    assert row["status"] == "voided" and row["deleted_at"]
     logs, _ = audit.list_logs(conn, entity_type="transaction", entity_id=r.id)
-    assert {l["action"] for l in logs} == {"create", "void"}
-    with pytest.raises(ValidationError, match="already"):
-        ledger.void_transaction(conn, r.id, "again")
-    with pytest.raises(ValidationError):
-        ledger.void_transaction(conn, post(conn, type="expense", source_account_id=ids["pocket"], amount="1").id, " ")
+    assert {l["action"] for l in logs} == {"create", "delete"}
+    with pytest.raises(NotFoundError):
+        ledger.delete_transaction(conn, r.id)                                 # a second delete finds nothing
 
 
-def test_cannot_void_a_loan_that_later_repayments_depend_on(conn, ids):
+def test_a_loan_can_be_deleted_even_after_repayments(conn, ids):
     loan = post(conn, type="lent", source_account_id=ids["bank"], person_id=ids["rahim"], amount="1000")
     post(conn, type="repayment_received", dest_account_id=ids["bank"], person_id=ids["rahim"], amount="400")
-    with pytest.raises(ValidationError, match="negative"):
-        ledger.void_transaction(conn, loan.id, "mistake")
-    assert conn.execute("SELECT status FROM transactions WHERE id = ?", (loan.id,)).fetchone()[0] == "posted"
+    ledger.delete_transaction(conn, loan.id)                                 # no settling required
+    assert ledger.account_balance(conn, ids["bank"]) == 1000000 + 40000
     assert ledger.verify_integrity(conn) == []
 
 

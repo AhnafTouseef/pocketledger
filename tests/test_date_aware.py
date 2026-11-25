@@ -108,11 +108,11 @@ def test_reconciliation_uses_the_same_rule(conn):
     assert rec["difference_minor"] == 0 and rec["status"] == "matched"
 
 
-def test_voiding_a_pre_opening_transaction_keeps_everything_consistent(conn):
+def test_deleting_a_pre_opening_transaction_keeps_everything_consistent(conn):
     wallet = make_account(conn, "Wallet", "3,000")
     rahim = people.create_person(conn, name="Rahim")
     tx = post(conn, type="lent", source_account_id=wallet, person_id=rahim, amount="1,000", occurred_local=local(conn, 30))
-    ledger.void_transaction(conn, tx.id, "entered by mistake")
+    ledger.delete_transaction(conn, tx.id)
     assert ledger.account_balance(conn, wallet) == 300000
     assert ledger.totals(conn, "BDT")["net_worth_minor"] == 300000
     assert ledger.verify_integrity(conn) == []
@@ -193,7 +193,7 @@ def test_migration_adds_and_backfills_opening_moment_for_old_accounts(tmp_path, 
               "VALUES ('Old wallet', 1, 'BDT', 300000, '2026-11-20', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')")
     c.close()
     monkeypatch.undo()
-    assert migrate.ensure_database(path) == ["0003"]
+    assert migrate.ensure_database(path) == ["0003", "0004"]
     c = connect(path)
     row = c.execute("SELECT opening_at FROM accounts").fetchone()
     assert row["opening_at"] == day_start_utc(__import__("datetime").date(2026, 11, 20), "Asia/Dhaka")

@@ -10,10 +10,10 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from . import db, migrate, security
 from .config import load_config
 from .money import format_amount, format_money
-from .services import settings as settings_svc
+from .services import settings as settings_svc, undo
 from .timeutil import humanize_ago, utc_iso_to_local
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 NAV_ITEMS = [
     ("dashboard.index", "Dashboard", "layout-dashboard"),
@@ -38,6 +38,8 @@ def create_app(overrides: dict | None = None) -> Flask:
     migrate.ensure_database(app.config["DATABASE"], app.config["BACKUP_DIR"])
     db.init_app(app)
     security.init_app(app)
+    undo.init_app(app)
+    _purge_at_startup(app)
     _register_template_helpers(app)
     _register_blueprints(app)
     _register_error_handlers(app)
@@ -46,6 +48,17 @@ def create_app(overrides: dict | None = None) -> Flask:
     if not app.debug and not app.testing:
         logging.basicConfig(level=logging.INFO)
     return app
+
+
+def _purge_at_startup(app: Flask) -> None:
+    """Erase records that were deleted more than a day ago (see services/undo.py)."""
+    conn = db.connect(app.config["DATABASE"])
+    try:
+        undo.purge(conn, force=True)
+    except Exception:  # never stop the app from starting because of housekeeping
+        app.logger.exception("Could not erase old deleted records")
+    finally:
+        conn.close()
 
 
 def _register_blueprints(app: Flask) -> None:

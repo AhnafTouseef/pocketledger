@@ -13,7 +13,7 @@ def populate(conn, ids):
     ledger.post_transaction(conn, {"type": "transfer", "source_account_id": ids["bank"], "dest_account_id": ids["pocket"], "amount": "500"})
     ledger.post_transaction(conn, {"type": "lent", "source_account_id": ids["pocket"], "person_id": ids["rahim"], "amount": "300", "due_date": "2027-01-01"})
     r = ledger.post_transaction(conn, {"type": "expense", "source_account_id": ids["bank"], "amount": "99"})
-    ledger.void_transaction(conn, r.id, "oops")
+    ledger.delete_transaction(conn, r.id)
     reconciliation.verify(conn, ids["pocket"], "2000")
 
 

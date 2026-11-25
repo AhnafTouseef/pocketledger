@@ -6,7 +6,7 @@ Priorities, in order: **financial correctness → data safety → convenience �
 
 - Money is stored as **integer minor units** (paisa). No floats anywhere.
 - Every transaction is posted as **balanced double-entry lines**. Balances are never stored — they are always derived from the ledger.
-- Ledger rows, audit logs and reconciliations are **immutable** (enforced by SQLite triggers, not just application code). Corrections are made by voiding and re-posting, with an audit trail.
+- Ledger rows, audit logs and reconciliations are **immutable** (enforced by SQLite triggers, not just application code). Money facts never change in place: an edit posts a corrected record, a delete hides the record (and Undo brings it back exactly).
 - BDT first (`৳`, Indian digit grouping). The schema has a `currencies` table, so adding currencies is data, not a rewrite (see Limitations).
 
 ---
@@ -69,10 +69,10 @@ DATABASE_PATH=instance/demo.db python run.py
 | Area | Features |
 |---|---|
 | **Dashboard** | Net worth (assets − liabilities), liquid money vs receivables, owed to you / you owe, accounts needing verification, account overview, quick actions, recent activity, alerts (overdue, due soon, unreconciled, stale verification) |
-| **Accounts** | Any number of accounts; custom account categories; opening balance (locked once history exists); archive (never delete); account detail with full history |
+| **Accounts** | Any number of accounts; custom account categories; opening balance (locked once history exists); delete any account whatever it holds (with Undo); account detail with full history |
 | **Transfers** | One transaction, two ledger lines (debit destination, credit source). Does not change net worth. |
 | **People** | Receivables and payables derived from transactions; partial repayments; due dates; per-loan remaining/overdue via FIFO allocation; repayment cannot exceed what is outstanding |
-| **Transactions** | Income, expense, transfer, lent, borrowed, repayment received, repayment made, adjustment. Search, filter, sort, pagination, CSV export. Void and edit (edit = void + linked replacement) with audit log |
+| **Transactions** | Income, expense, transfer, lent, borrowed, repayment received, repayment made, adjustment. Search, filter, sort, pagination, CSV export. Delete (with Undo) and edit (a changed amount, date, account or person posts a linked replacement) with audit log |
 | **Reconciliation** | Record what you counted vs what the ledger expects. Never auto-classified as theft or loss. History is preserved; a difference can stay *unresolved* indefinitely. Resolve by adding the missing transaction (back-dated, linked) or an explicit, labelled adjustment |
 | **Analytics** | Date presets/custom range; income vs expense and net-worth trend; expense by category; account distribution; outstanding receivables/payables; reconciliation history |
 | **Backup / restore** | SQLite online backup, JSON export/import, CSV export, validation before restore, typed `RESTORE` confirmation, automatic safety backup before restore and before migrations |
@@ -108,8 +108,8 @@ All amounts are positive integers; direction comes from which side (debit/credit
 | Decision | Reason | Trade-off |
 |---|---|---|
 | Derive balances from entries (SQL views) instead of storing them | A stored balance can silently drift from history; a derived one cannot | Slightly more work per read; fine at personal scale |
-| Immutable ledger + void/replace instead of in-place edits | Full history, auditability, no "where did this number go" | Editing an amount creates a new transaction id (linked via `replaces_id`/`replaced_by_id`) |
-| Triggers enforce immutability | Protects against bugs and manual SQL, not just the web UI | Maintenance/repair needs a deliberate migration |
+| Immutable ledger + replace-on-edit instead of in-place edits | Full history, auditability, no "where did this number go" | Editing an amount creates a new transaction id (linked via `replaces_id`/`replaced_by_id`) |
+| Triggers enforce immutability; deletes are soft and erased later | Protects against bugs and manual SQL, not just the web UI | Maintenance/repair needs a deliberate migration |
 | Idempotency key (client UUID) per transaction | Offline queue and double-taps can't create duplicates | Needs a client that generates UUIDs (the bundled JS does) |
 | SQLite, `BEGIN IMMEDIATE`, savepoints | Zero-setup, atomic, runs on Windows | One writer at a time, needs a persistent disk on hosts |
 | Forward-only SQL migrations | Simple, reviewable, no ORM | No automatic downgrade; a backup is taken before each upgrade |
@@ -136,8 +136,8 @@ pocketledger/
 │   ├── timeutil.py        # UTC storage, local display
 │   ├── security.py        # CSRF, auth guard, headers, login throttle
 │   ├── cli.py             # flask commands
-│   ├── migrations/        # 0001_initial.sql, 0002_reference_data.sql (forward-only)
-│   ├── services/          # ledger, accounts, people, transactions, reconciliation,
+│   ├── migrations/        # 0001 … 0004 (forward-only; 0004 adds soft delete + the undo log)
+│   ├── services/          # ledger, accounts, people, transactions, undo, reconciliation,
 │   │                      #   analytics, dashboard, backup, audit, settings
 │   ├── views/             # Flask blueprints (one per area) + JSON API + PWA routes
 │   ├── templates/
@@ -178,6 +178,27 @@ In production the app refuses to start without a strong `SECRET_KEY`, sends `Str
 Timezone and display preferences (default `Asia/Dhaka`) are in Settings → Preferences. Timestamps are stored in UTC.
 
 ---
+
+## Deleting and Undo
+
+PocketLedger records what you choose to keep track of; it never decides which records you are allowed to have.
+
+- **Delete anything, any time.** Accounts (even with a balance), people (even with unsettled loans) and individual records
+  (loans, repayments, transfers, income, expenses, adjustments). No settling up, no moving money first, and no other account
+  is touched. Every delete asks for confirmation; deleting an account shows its name and recorded balance. Deleting only
+  removes information from PocketLedger. It does not change real money or any real-world debt.
+- **What goes with what.** Deleting an account also deletes its own income, expense and adjustment records. Transfers and loans
+  that involve it stay (the account shows as "Name (deleted)"), so the other account or person is unaffected. Deleting a person
+  deletes their lending, borrowing and repayment records.
+- **Undo** appears as a toast after a save or a delete (accounts, people, transactions of every type, edits, balance
+  adjustments, repayments). One Undo reverses the whole action: balances, restored records with their original details and links.
+  It works once only, for 15 minutes, and is refused (changing nothing) if the same records were changed afterwards, so later work
+  is never overwritten. Undoing the creation of an account or person is refused once records depend on it.
+- **Housekeeping.** Deleted records are hidden at once and erased for good after 24 hours, together with their activity-log lines.
+  Direct SQL deletes on the ledger are still blocked; only this clean-up can erase rows.
+- **Not undoable:** a balance verification (it is a record of a count, not a change), restoring a backup.
+- Because nothing forces loans to be settled before deleting, you can end up with a repayment whose loan you deleted. The person
+  then shows a note instead of an error, and every total stays consistent.
 
 ## Backup and restore
 
@@ -251,7 +272,7 @@ pytest                          # 107 tests
 flask --app wsgi check          # integrity check of your actual database
 ```
 
-The suite covers money parsing/formatting, every transaction type's ledger lines, a randomized model test (random operations checked against an independent calculation of every balance), void/edit, FIFO loan allocation, immutability triggers, idempotency, reconciliation lifecycle, backup/restore validation, auth/CSRF/route-guard, and every route.
+The suite covers money parsing/formatting, every transaction type's ledger lines, a randomized model test (random operations checked against an independent calculation of every balance), delete/undo/edit, FIFO loan allocation, immutability triggers, idempotency, reconciliation lifecycle, backup/restore validation, auth/CSRF/route-guard, and every route.
 
 ### Verify the financial calculations by hand
 
@@ -275,7 +296,7 @@ On a fresh (or demo) database:
 - **Login throttle is per process and per IP, in memory** — it resets on restart.
 - **SQLite = one writer**, needs a persistent disk, and is meant for one process.
 - **An account's opening date can't be changed after creation** (it would rewrite every balance). To change it, create a new account with the right date and balance.
-- **Editing money fields creates a new transaction** (old one voided and linked), so ids change.
+- **Editing money fields creates a new transaction** (the old one is kept as history and linked), so ids change.
 - **Not implemented:** recurring transactions, budgets, attachments/receipts, split transactions, CSV import, multi-user sharing.
 - Front-end behaviour (offline queue, install prompt, charts) was verified manually in headless Chromium; it is not part of the automated pytest suite.
 

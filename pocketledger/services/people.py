@@ -9,7 +9,7 @@ from __future__ import annotations
 from ..db import transaction
 from ..money import format_money
 from ..timeutil import parse_date, utcnow_iso
-from . import audit, settings as settings_svc
+from . import audit, ledger, settings as settings_svc, undo
 from .errors import NotFoundError, ValidationError
 
 
@@ -26,14 +26,15 @@ def create_person(conn, *, name, contact=None, notes=None):
         raise ValidationError("Enter the person's name.", "name")
     contact = _clean(contact, 120, "contact", "Contact")
     notes = _clean(notes, 1000, "notes", "Notes")
-    with transaction(conn):
-        if conn.execute("SELECT 1 FROM people WHERE name = ? AND is_archived = 0", (name,)).fetchone():
+    with transaction(conn), undo.group(conn, f"Added {name}", ("people.index", {})) as grp:
+        if conn.execute("SELECT 1 FROM people WHERE name = ? AND is_archived = 0 AND deleted_at IS NULL", (name,)).fetchone():
             raise ValidationError("Someone with that name already exists. Add a detail to tell them apart, e.g. “Rahim (cousin)”.", "name")
         now = utcnow_iso()
         cur = conn.execute(
             "INSERT INTO people (name, contact, notes, created_at, updated_at) VALUES (?,?,?,?,?)",
             (name, contact, notes, now, now),
         )
+        grp.created("people", cur.lastrowid)
         audit.log(conn, "create", "person", cur.lastrowid, after={"name": name})
     return cur.lastrowid
 
@@ -44,32 +45,51 @@ def update_person(conn, person_id, *, name, contact, notes):
         raise ValidationError("Enter the person's name.", "name")
     contact = _clean(contact, 120, "contact", "Contact")
     notes = _clean(notes, 1000, "notes", "Notes")
-    with transaction(conn):
+    with transaction(conn), undo.group(conn, f"Edited {name}", ("people.detail", {"person_id": person_id})) as grp:
         old = conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
-        if old is None:
+        if old is None or old["deleted_at"]:
             raise NotFoundError("Person not found.")
         if not old["is_archived"] and conn.execute(
-            "SELECT 1 FROM people WHERE name = ? AND is_archived = 0 AND id <> ?", (name, person_id)
+            "SELECT 1 FROM people WHERE name = ? AND is_archived = 0 AND deleted_at IS NULL AND id <> ?", (name, person_id)
         ).fetchone():
             raise ValidationError("Someone with that name already exists.", "name")
+        now = utcnow_iso()
         conn.execute("UPDATE people SET name = ?, contact = ?, notes = ?, updated_at = ? WHERE id = ?",
-                     (name, contact, notes, utcnow_iso(), person_id))
+                     (name, contact, notes, now, person_id))
+        grp.changed("people", person_id, {"name": old["name"], "contact": old["contact"], "notes": old["notes"],
+                                         "updated_at": old["updated_at"]},
+                    {"name": name, "contact": contact, "notes": notes, "updated_at": now})
         audit.log(conn, "update", "person", person_id,
                   before={k: old[k] for k in ("name", "contact", "notes")},
                   after={"name": name, "contact": contact, "notes": notes})
 
 
-def archive_person(conn, person_id):
-    with transaction(conn):
+def deletion_summary(conn, person_id):
+    """What deleting this person would do, for the confirmation dialog."""
+    p = get_person(conn, person_id)
+    n = conn.execute("SELECT COUNT(*) FROM transactions WHERE person_id = ? AND status = 'posted' AND deleted_at IS NULL",
+                     (person_id,)).fetchone()[0]
+    return {"person": p, "record_count": n}
+
+
+def delete_person(conn, person_id):
+    """Delete a person and the lending / borrowing / repayment records with them, settled or not.
+    Those records are the person's own, so they go together (one Undo brings everything back)."""
+    with transaction(conn), undo.group(conn, "Deleted person", ("people.detail", {"person_id": person_id})) as grp:
         p = conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
-        if p is None:
+        if p is None or p["deleted_at"]:
             raise NotFoundError("Person not found.")
-        base = settings_svc.base_currency_code(conn)
-        bal = balances(conn, person_id)
-        if any(b["receivable_minor"] or b["payable_minor"] for b in bal.values()):
-            raise ValidationError("This person still has an outstanding balance. Settle it before archiving.")
-        conn.execute("UPDATE people SET is_archived = 1, updated_at = ? WHERE id = ?", (utcnow_iso(), person_id))
-        audit.log(conn, "archive", "person", person_id, before={"name": p["name"]})
+        now = utcnow_iso()
+        for (tx_id,) in conn.execute("SELECT id FROM transactions WHERE person_id = ? AND status = 'posted' "
+                                     "AND deleted_at IS NULL", (person_id,)).fetchall():
+            ledger.soft_delete_transaction(conn, tx_id, grp, now)
+        conn.execute("UPDATE people SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                     (now, now, person_id))
+        grp.changed("people", person_id, {"deleted_at": None, "updated_at": p["updated_at"]},
+                    {"deleted_at": now, "updated_at": now})
+        grp.label = f"Deleted {p['name']}"
+        audit.log(conn, "delete", "person", person_id)
+    return p["name"]
 
 
 def unarchive_person(conn, person_id):
@@ -77,7 +97,7 @@ def unarchive_person(conn, person_id):
         p = conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
         if p is None:
             raise NotFoundError("Person not found.")
-        if conn.execute("SELECT 1 FROM people WHERE name = ? AND is_archived = 0", (p["name"],)).fetchone():
+        if conn.execute("SELECT 1 FROM people WHERE name = ? AND is_archived = 0 AND deleted_at IS NULL", (p["name"],)).fetchone():
             raise ValidationError("An active person with that name already exists.")
         conn.execute("UPDATE people SET is_archived = 0, updated_at = ? WHERE id = ?", (utcnow_iso(), person_id))
         audit.log(conn, "unarchive", "person", person_id, before={"name": p["name"]})
@@ -93,7 +113,7 @@ def balances(conn, person_id):
 
 def get_person(conn, person_id, currency=None):
     p = conn.execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
-    if p is None:
+    if p is None or p["deleted_at"]:
         raise NotFoundError("Person not found.")
     currency = currency or settings_svc.base_currency_code(conn)
     out = dict(p)
@@ -159,7 +179,7 @@ def _all_open_loans(conn, side, currency):
 
 def list_people(conn, currency=None, include_archived=False):
     currency = currency or settings_svc.base_currency_code(conn)
-    where = "" if include_archived else "WHERE p.is_archived = 0"
+    where = "WHERE p.deleted_at IS NULL" + ("" if include_archived else " AND p.is_archived = 0")
     rows = conn.execute(
         "SELECT p.*, COALESCE(b.lent_minor, 0) AS lent_minor, COALESCE(b.received_back_minor, 0) AS received_back_minor,"
         " COALESCE(b.borrowed_minor, 0) AS borrowed_minor, COALESCE(b.repaid_minor, 0) AS repaid_minor,"

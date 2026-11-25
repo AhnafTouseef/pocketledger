@@ -371,7 +371,7 @@
         let data = {}; try { data = await res.json(); } catch (err) { /* non-JSON error page */ }
         if (res.ok && data.ok) {
           try { await PL.store.queueDelete(S.uuid); PL.queue.refreshUI(); } catch (err) { /* nothing queued */ }
-          PL.toast(data.message || 'Saved.', 'success'); (data.warnings || []).forEach((w) => PL.toast(w, 'warning', 9000));
+          if (data.undo) PL.undoLater(data.undo, data.message || 'Saved.'); else PL.toast(data.message || 'Saved.', 'success'); (data.warnings || []).forEach((w) => PL.toast(w, 'warning', 9000));
           done({ saved: true, id: data.id }); return;
         }
         if (res.status === 422) { showError(data.field || '_', data.error || 'This transaction was rejected.'); return; }

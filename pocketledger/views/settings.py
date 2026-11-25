@@ -168,8 +168,8 @@ def _discard_staged():
 
 def _live_stats(conn):
     return {
-        "accounts": conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
-        "people": conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+        "accounts": conn.execute("SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL").fetchone()[0],
+        "people": conn.execute("SELECT COUNT(*) FROM people WHERE deleted_at IS NULL").fetchone()[0],
         "transactions": conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
         "reconciliations": conn.execute("SELECT COUNT(*) FROM reconciliations").fetchone()[0],
     }

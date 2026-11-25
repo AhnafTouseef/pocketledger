@@ -162,10 +162,9 @@ def test_full_money_flow_through_the_web_layer(authed, conn):
 
     tx_id = conn.execute("SELECT id FROM transactions WHERE type='lent'").fetchone()[0]
     assert authed.get(f"/transactions/{tx_id}").status_code == 200
-    v = authed.post(f"/transactions/{tx_id}/void", data={"reason": "wrong person", "csrf_token": tok})
+    v = authed.post(f"/transactions/{tx_id}/delete", data={"csrf_token": tok})
     assert v.status_code == 302
-    assert "voided" in authed.get(f"/transactions/{tx_id}").get_data(as_text=True)
-    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 2     # nothing deleted
+    assert authed.get(f"/transactions/{tx_id}").status_code == 404                # gone from the app
     from pocketledger.services import ledger
     assert ledger.verify_integrity(conn) == []
 
@@ -289,15 +288,15 @@ def test_minimum_zero_allows_blank_password_end_to_end(tmp_path, monkeypatch):
     app = create_app({"TESTING": True})
     assert app.config["MIN_PASSWORD_LENGTH"] == 0
     c = app.test_client()
-    r = c.post("/setup", data={"username": "ahnaf", "password": "", "confirm": "",
+    r = c.post("/setup", data={"username": "tester", "password": "", "confirm": "",
                                "csrf_token": csrf_from(c.get("/setup").get_data(as_text=True))})
     assert r.status_code == 302                                   # account created with a blank password
     page = c.get("/login").get_data(as_text=True)
     assert "required" not in page.split('name="password"')[1].split(">")[0]   # browser doesn't force a value
-    r = c.post("/login", data={"username": "ahnaf", "password": "", "csrf_token": csrf_from(page)})
+    r = c.post("/login", data={"username": "tester", "password": "", "csrf_token": csrf_from(page)})
     assert r.status_code == 302 and c.get("/").status_code == 200
     other = app.test_client()                                     # a wrong password is still rejected
-    bad = other.post("/login", data={"username": "ahnaf", "password": "nope",
+    bad = other.post("/login", data={"username": "tester", "password": "nope",
                                      "csrf_token": csrf_from(other.get("/login").get_data(as_text=True))})
     assert b"Wrong username or password" in bad.data
 

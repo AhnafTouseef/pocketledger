@@ -102,16 +102,17 @@ def edit(tx_id):
     return render_template("transactions/form.html", prefill=prefill, editing=True, t=t, recon=None)
 
 
-@bp.route("/<int:tx_id>/void", methods=["POST"])
-def void(tx_id):
+@bp.route("/<int:tx_id>/delete", methods=["POST"])
+def delete(tx_id):
     try:
-        ledger.void_transaction(get_db(), tx_id, request.form.get("reason"))
-        flash("Transaction voided. It stays in your history and all balances were updated.", "success")
+        ledger.delete_transaction(get_db(), tx_id)
+        flash("Transaction deleted.", "success")
     except NotFoundError:
         abort(404)
     except ServiceError as exc:
         flash(exc.message, "error")
-    return redirect(url_for("transactions.detail", tx_id=tx_id))
+        return redirect(url_for("transactions.detail", tx_id=tx_id))
+    return redirect(url_for("transactions.index"))
 
 
 @bp.route("/export.csv")

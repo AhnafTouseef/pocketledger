@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..db import transaction
 from ..money import MoneyError, format_money, parse_amount
 from ..timeutil import day_start_utc, parse_date, today_local, utcnow, utcnow_iso
-from . import audit, ledger, settings as settings_svc
+from . import audit, ledger, settings as settings_svc, undo
 from .errors import NotFoundError, ValidationError
 
 _BASE_SQL = """
@@ -59,7 +59,7 @@ def _clean_text(value, limit, field, required=False, label="This"):
 
 def _check_name_free(conn, name, exclude_id=None):
     row = conn.execute(
-        "SELECT id FROM accounts WHERE name = ? AND is_archived = 0 AND id IS NOT ?", (name, exclude_id)
+        "SELECT id FROM accounts WHERE name = ? AND is_archived = 0 AND deleted_at IS NULL AND id IS NOT ?", (name, exclude_id)
     ).fetchone()
     if row is not None:
         raise ValidationError("You already have an active account with that name.", "name")
@@ -97,7 +97,7 @@ def create_account(conn, *, name, category_id, currency, opening_balance, opened
     else:
         opened = today_local(tz)
     description = _clean_text(description, 300, "description", label="Description")
-    with transaction(conn):
+    with transaction(conn), undo.group(conn, f"Created account “{name}”", ("accounts.index", {})) as grp:
         _check_name_free(conn, name)
         now = utcnow_iso()
         c = conn.execute(
@@ -106,6 +106,7 @@ def create_account(conn, *, name, category_id, currency, opening_balance, opened
             (name, cid, cur["code"], opening_minor, opened.isoformat(), description, now, now,
              day_start_utc(opened, tz)),
         )
+        grp.created("accounts", c.lastrowid)
         audit.log(conn, "create", "account", c.lastrowid,
                   after={"name": name, "opening_balance_minor": opening_minor, "currency": cur["code"]})
     return c.lastrowid
@@ -115,9 +116,9 @@ def update_account(conn, account_id, *, name, category_id, description, opening_
     name = _clean_text(name, 60, "name", required=True, label="Account name")
     cid = _check_category(conn, category_id)
     description = _clean_text(description, 300, "description", label="Description")
-    with transaction(conn):
+    with transaction(conn), undo.group(conn, f"Edited account “{name}”", ("accounts.detail", {"account_id": account_id})) as grp:
         old = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        if old is None:
+        if old is None or old["deleted_at"]:
             raise NotFoundError("Account not found.")
         if not old["is_archived"]:
             _check_name_free(conn, name, exclude_id=account_id)
@@ -133,10 +134,15 @@ def update_account(conn, account_id, *, name, category_id, description, opening_
                     "The opening balance is locked once an account has history. Use a balance adjustment instead.",
                     "opening_balance",
                 )
+        now = utcnow_iso()
         conn.execute(
             "UPDATE accounts SET name = ?, category_id = ?, description = ?, opening_balance_minor = ?, updated_at = ?"
-            " WHERE id = ?", (name, cid, description, new_opening, utcnow_iso(), account_id),
+            " WHERE id = ?", (name, cid, description, new_opening, now, account_id),
         )
+        fields = ("name", "category_id", "description", "opening_balance_minor")
+        grp.changed("accounts", account_id, {**{f: old[f] for f in fields}, "updated_at": old["updated_at"]},
+                    {"name": name, "category_id": cid, "description": description,
+                     "opening_balance_minor": new_opening, "updated_at": now})
         audit.log(conn, "update", "account", account_id,
                   before={k: old[k] for k in ("name", "category_id", "description", "opening_balance_minor")},
                   after={"name": name, "category_id": cid, "description": description, "opening_balance_minor": new_opening})
@@ -149,20 +155,40 @@ def has_history(conn, account_id) -> bool:
     )
 
 
-def archive_account(conn, account_id):
-    with transaction(conn):
+def deletion_summary(conn, account_id):
+    """What deleting this account would do, for the confirmation dialog."""
+    acc = get_account(conn, account_id)
+    own = _own_transaction_ids(conn, account_id)
+    touching = conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE status = 'posted' AND deleted_at IS NULL "
+        "AND (source_account_id = ? OR dest_account_id = ?)", (account_id, account_id)).fetchone()[0]
+    return {"account": acc, "own_count": len(own), "kept_count": touching - len(own)}
+
+
+def _own_transaction_ids(conn, account_id):
+    """Income, expenses and balance adjustments belong to this account alone, so they go with it.
+    Transfers and loans also describe another account or a person; those stay (they show this
+    account as 'deleted') so nothing else changes."""
+    return [r[0] for r in conn.execute(
+        "SELECT id FROM transactions WHERE status = 'posted' AND deleted_at IS NULL "
+        "AND type IN ('income', 'expense', 'adjustment') AND (source_account_id = ? OR dest_account_id = ?)",
+        (account_id, account_id))]
+
+
+def delete_account(conn, account_id):
+    """Delete an account whatever it holds. No balance is moved and no other account is touched."""
+    with transaction(conn), undo.group(conn, "Deleted account", ("accounts.detail", {"account_id": account_id})) as grp:
         acc = get_account(conn, account_id)
-        if acc["is_archived"]:
-            return
-        if acc["balance_minor"] != 0:
-            cur = settings_svc.get_currency(conn, acc["currency"])
-            raise ValidationError(
-                f"“{acc['name']}” still holds {format_money(acc['balance_minor'], cur)}. Move it to another "
-                "account (or post an adjustment) before archiving, so no money disappears from view.",
-            )
-        conn.execute("UPDATE accounts SET is_archived = 1, archived_at = ?, updated_at = ? WHERE id = ?",
-                     (utcnow_iso(), utcnow_iso(), account_id))
-        audit.log(conn, "archive", "account", account_id, before={"name": acc["name"]})
+        now = utcnow_iso()
+        for tx_id in _own_transaction_ids(conn, account_id):
+            ledger.soft_delete_transaction(conn, tx_id, grp, now)
+        conn.execute("UPDATE accounts SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                     (now, now, account_id))
+        grp.changed("accounts", account_id, {"deleted_at": None, "updated_at": acc["updated_at"]},
+                    {"deleted_at": now, "updated_at": now})
+        grp.label = f"Deleted account “{acc['name']}”"
+        audit.log(conn, "delete", "account", account_id)
+    return acc["name"]
 
 
 def unarchive_account(conn, account_id):
