@@ -90,3 +90,14 @@ def test_deleting_something_that_is_gone_is_a_clean_404(authed, conn, ids):
     assert authed.post("/accounts/999/delete", data={"csrf_token": tok}).status_code == 404
     assert authed.post("/people/999/delete", data={"csrf_token": tok}).status_code == 404
     assert authed.post("/transactions/999/delete", data={"csrf_token": tok}).status_code == 404
+
+
+def test_login_and_setup_forms_give_instant_feedback(app, conn):
+    from werkzeug.security import generate_password_hash
+    c = app.test_client()
+    setup = c.get("/setup").get_data(as_text=True)
+    assert 'data-busy="Creating account…"' in setup and "/static/js/busy.js" in setup
+    conn.execute("INSERT INTO users (username, password_hash) VALUES ('u1', ?)", (generate_password_hash("secret1"),))
+    conn.commit()
+    login = c.get("/login").get_data(as_text=True)
+    assert 'data-busy="Signing in…"' in login and "/static/js/busy.js" in login

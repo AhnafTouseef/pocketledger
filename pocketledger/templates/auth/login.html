@@ -1,6 +1,6 @@
 {% extends 'auth/layout.html' %}
 {% block body %}
-<form method="post" autocomplete="on">
+<form method="post" autocomplete="on" data-busy="Signing in…">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <p class="muted center" style="margin-bottom:1.2rem">Sign in to your finances.</p>
   {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}

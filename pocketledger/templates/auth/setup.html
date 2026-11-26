@@ -1,7 +1,7 @@
 {% extends 'auth/layout.html' %}
 {% block title %}Create your account{% endblock %}
 {% block body %}
-<form method="post" autocomplete="off">
+<form method="post" autocomplete="off" data-busy="Creating account…">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <h1 style="font-size:1.2rem;margin-bottom:.3rem">Create your account</h1>
   <p class="muted small">PocketLedger is a single-user app. This account protects all your financial data.</p>

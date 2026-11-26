@@ -334,3 +334,10 @@ a.account-card:hover { background: var(--surface-2); text-decoration: none; }
 .stat.hero .hint { color: var(--muted); }
 a.stat:hover { border-color: var(--border-strong); background: var(--surface-2); }
 .strong { font-weight: 700; }
+
+/* busy submit button */
+.btn.is-busy { position: relative; opacity: .85; cursor: progress; }
+.btn.is-busy::before { content: ""; display: inline-block; width: .95em; height: .95em; margin-right: .55em; vertical-align: -.12em;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pl-spin .7s linear infinite; }
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .btn.is-busy::before { animation-duration: 2.4s; } }
