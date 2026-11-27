@@ -76,7 +76,13 @@ def _check_category(conn, category_id):
     return cid
 
 
-def create_account(conn, *, name, category_id, currency, opening_balance, opened_on=None, description=None):
+def find_by_client_uuid(conn, client_uuid):
+    """The account an earlier (possibly retried) offline create already made, if any."""
+    return conn.execute("SELECT id FROM accounts WHERE client_uuid = ?", (client_uuid,)).fetchone()
+
+
+def create_account(conn, *, name, category_id, currency, opening_balance, opened_on=None, description=None,
+                   client_uuid=None):
     name = _clean_text(name, 60, "name", required=True, label="Account name")
     cid = _check_category(conn, category_id)
     cur = settings_svc.get_currency(conn, currency or settings_svc.base_currency_code(conn))
@@ -102,9 +108,9 @@ def create_account(conn, *, name, category_id, currency, opening_balance, opened
         now = utcnow_iso()
         c = conn.execute(
             "INSERT INTO accounts (name, category_id, currency, opening_balance_minor, opened_on, description,"
-            " created_at, updated_at, opening_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            " created_at, updated_at, opening_at, client_uuid) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (name, cid, cur["code"], opening_minor, opened.isoformat(), description, now, now,
-             day_start_utc(opened, tz)),
+             day_start_utc(opened, tz), client_uuid),
         )
         grp.created("accounts", c.lastrowid)
         audit.log(conn, "create", "account", c.lastrowid,

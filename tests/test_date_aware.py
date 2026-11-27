@@ -193,7 +193,7 @@ def test_migration_adds_and_backfills_opening_moment_for_old_accounts(tmp_path, 
               "VALUES ('Old wallet', 1, 'BDT', 300000, '2026-11-20', '2026-11-20T00:00:00Z', '2026-11-20T00:00:00Z')")
     c.close()
     monkeypatch.undo()
-    assert migrate.ensure_database(path) == ["0003", "0004"]
+    assert migrate.ensure_database(path) == ["0003", "0004", "0005"]
     c = connect(path)
     row = c.execute("SELECT opening_at FROM accounts").fetchone()
     assert row["opening_at"] == day_start_utc(__import__("datetime").date(2026, 11, 20), "Asia/Dhaka")

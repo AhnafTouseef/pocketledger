@@ -6,6 +6,8 @@ produce a duplicate.
 """
 from __future__ import annotations
 
+import re
+
 from flask import Blueprint, jsonify, request, url_for
 
 from ..db import get_db
@@ -22,11 +24,38 @@ ALLOWED_FIELDS = {
 }
 
 
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+_REF_FIELDS = (("source_account_id", "acct:", accounts_svc), ("dest_account_id", "acct:", accounts_svc),
+               ("account_id", "acct:", accounts_svc), ("person_id", "person:", people_svc))
+
+
 def _payload():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         raise ServiceError("Send the transaction as JSON.")
     return {k: v for k, v in data.items() if k in ALLOWED_FIELDS}
+
+
+def _resolve_refs(conn, data):
+    """A transaction queued offline may point at an account or person that was also created offline
+    ("acct:<client id>", "person:<client id>"). By the time it arrives the record exists (the device
+    syncs those first); swap the reference for the real id. An unknown reference is a clear rejection."""
+    for field, prefix, svc in _REF_FIELDS:
+        value = data.get(field)
+        if isinstance(value, str) and value.startswith(prefix):
+            row = svc.find_by_client_uuid(conn, value[len(prefix):].lower())
+            if row is None:
+                what = "account" if prefix == "acct:" else "person"
+                raise ServiceError(f"The {what} this entry uses was never created on the server (it may have been "
+                                   f"rejected or discarded). Choose an existing {what}.", field)
+            data[field] = row["id"]
+
+
+def _client_uuid(data):
+    value = str(data.get("uuid") or "").strip().lower()
+    if not _UUID_RE.match(value):
+        raise ServiceError("Missing or invalid id for this request.", "uuid")
+    return value
 
 
 def _error(exc: ServiceError, status=422):
@@ -53,6 +82,8 @@ def options():
             {"id": p["id"], "name": p["name"], "receivable_minor": p["receivable_minor"], "payable_minor": p["payable_minor"]}
             for p in people_svc.list_people(conn)
         ],
+        account_categories=[{"id": c["id"], "name": c["name"], "kind": c["kind"]} for c in categories.list_account_categories(conn)],
+        currencies=[{"code": c["code"], "symbol": c["symbol"], "minor_unit": c["minor_unit"]} for c in settings_svc.enabled_currencies(conn)],
         categories={
             "income": [{"id": c["id"], "name": c["name"]} for c in categories.list_transaction_categories(conn, "income")],
             "expense": [{"id": c["id"], "name": c["name"]} for c in categories.list_transaction_categories(conn, "expense")],
@@ -68,6 +99,7 @@ def create_transaction():
         data = _payload()
         if not data.get("uuid"):
             raise ServiceError("Missing transaction id.", "uuid")
+        _resolve_refs(conn, data)
         res = ledger.post_transaction(conn, data)
     except ServiceError as exc:
         return _error(exc)
@@ -79,6 +111,55 @@ def create_transaction():
         message=f"{ledger.TYPE_LABELS[t['type']]} of {format_money(t['amount_minor'], cur)} saved."
         if res.created else "Already saved earlier; nothing was duplicated.",
     ), (201 if res.created else 200)
+
+
+ACCOUNT_FIELDS = {"uuid", "name", "category_id", "currency", "opening_balance", "opened_on", "description"}
+PERSON_FIELDS = {"uuid", "name", "contact", "notes"}
+
+
+@bp.route("/accounts", methods=["POST"])
+def create_account():
+    """Create an account. Idempotent on the client's uuid, so a queued request that is sent twice makes one account."""
+    conn = get_db()
+    try:
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ServiceError("Send the account as JSON.")
+        data = {k: v for k, v in body.items() if k in ACCOUNT_FIELDS}
+        cu = _client_uuid(data)
+        earlier = accounts_svc.find_by_client_uuid(conn, cu)
+        if earlier:
+            return jsonify(ok=True, id=earlier["id"], created=False, undo=None,
+                           message="Already saved earlier; nothing was duplicated."), 200
+        new_id = accounts_svc.create_account(
+            conn, name=data.get("name"), category_id=data.get("category_id"), currency=data.get("currency"),
+            opening_balance=data.get("opening_balance"), opened_on=data.get("opened_on"),
+            description=data.get("description"), client_uuid=cu)
+    except ServiceError as exc:
+        return _error(exc)
+    return jsonify(ok=True, id=new_id, created=True, undo=undo_svc.take_last(),
+                   message=f"Account “{str(data['name']).strip()}” created."), 201
+
+
+@bp.route("/people", methods=["POST"])
+def create_person():
+    conn = get_db()
+    try:
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise ServiceError("Send the person as JSON.")
+        data = {k: v for k, v in body.items() if k in PERSON_FIELDS}
+        cu = _client_uuid(data)
+        earlier = people_svc.find_by_client_uuid(conn, cu)
+        if earlier:
+            return jsonify(ok=True, id=earlier["id"], created=False, undo=None,
+                           message="Already saved earlier; nothing was duplicated."), 200
+        new_id = people_svc.create_person(conn, name=data.get("name"), contact=data.get("contact"),
+                                          notes=data.get("notes"), client_uuid=cu)
+    except ServiceError as exc:
+        return _error(exc)
+    return jsonify(ok=True, id=new_id, created=True, undo=undo_svc.take_last(),
+                   message=f"{str(data['name']).strip()} added."), 201
 
 
 @bp.route("/transactions/<uuid>")
@@ -95,6 +176,7 @@ def update_transaction(tx_id):
     conn = get_db()
     try:
         data = _payload()
+        _resolve_refs(conn, data)
         new_id, kind = ledger.edit_transaction(conn, tx_id, data, reason=(request.get_json(silent=True) or {}).get("reason"))
     except NotFoundError:
         return jsonify(error="Transaction not found."), 404

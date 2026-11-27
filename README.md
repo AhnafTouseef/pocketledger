@@ -136,7 +136,7 @@ pocketledger/
 │   ├── timeutil.py        # UTC storage, local display
 │   ├── security.py        # CSRF, auth guard, headers, login throttle
 │   ├── cli.py             # flask commands
-│   ├── migrations/        # 0001 … 0004 (forward-only; 0004 adds soft delete + the undo log)
+│   ├── migrations/        # 0001 … 0005 (forward-only; 0004 soft delete + undo log, 0005 client ids for offline create)
 │   ├── services/          # ledger, accounts, people, transactions, undo, reconciliation,
 │   │                      #   analytics, dashboard, backup, audit, settings
 │   ├── views/             # Flask blueprints (one per area) + JSON API + PWA routes
@@ -178,6 +178,20 @@ In production the app refuses to start without a strong `SECRET_KEY`, sends `Str
 Timezone and display preferences (default `Asia/Dhaka`) are in Settings → Preferences. Timestamps are stored in UTC.
 
 ---
+
+## Working offline
+
+Once you have opened PocketLedger online, you can keep using it without a connection:
+
+- **Record transactions** of every type. They are held on the device, marked "not saved yet", and sent when you are back
+  online. Each carries a unique id, so a retry can never save it twice.
+- **Add accounts and people.** Use the normal "New account" / "Add person" buttons (or the buttons on the offline page).
+  They are held on the device and appear in the pickers straight away, marked "not synced yet", so you can record
+  transactions against them before anything has reached the server. An account's opening date defaults to today on the device.
+- **Sync order.** Accounts first, then people, then transactions. If the server rejects an account or person (for example the
+  name was taken on another device), the transactions that use it are held, never sent or guessed at. Open the "not saved yet"
+  pill, then use Fix and resend (rename it) or Discard.
+- **Online only:** editing, deleting and Undo, and anything that needs balances or history from the server.
 
 ## Deleting and Undo
 

@@ -32,7 +32,28 @@
 
   /* ---------------------------------------------------------------- options */
   const Options = {
-    data: null, stale: false,
+    data: null, stale: false, listeners: [],
+    /* Accounts and people created on this device but not yet confirmed by the server are shown in the pickers
+     * (marked "not synced yet") under the id "acct:<uuid>" / "person:<uuid>". The server resolves those
+     * references when the queued transactions arrive. They are never written to the cached copy. */
+    async refreshPending() {
+      const d = this.data; if (!d) return;
+      for (const list of [d.accounts, d.people]) for (let i = list.length - 1; i >= 0; i--) if (list[i].pending) list.splice(i, 1);
+      let items = []; try { items = await PL.store.queueAll(); } catch (e) { /* no idb */ }
+      const cats = d.account_categories || []; const day = (d.today || '');
+      for (const it of items) {
+        if (it.status === 'rejected') continue;
+        const p = it.payload || {};
+        if (it.kind === 'account') {
+          const c = cats.find((x) => String(x.id) === String(p.category_id)) || {};
+          d.accounts.push({ id: 'acct:' + p.uuid, name: p.name, kind: c.kind || '', category: (c.name || 'Account') + ' \u00b7 not synced yet',
+            currency: p.currency || (d.currency || {}).code, balance_minor: PL.parseAmount(p.opening_balance || '0') || 0, opened_on: p.opened_on || day, pending: true });
+        } else if (it.kind === 'person') {
+          d.people.push({ id: 'person:' + p.uuid, name: p.name, receivable_minor: 0, payable_minor: 0, pending: true });
+        }
+      }
+      this.listeners = this.listeners.filter((fn) => fn() !== false);
+    },
     async load(force) {
       if (this.data && !force) return this.data;
       const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 6000);
@@ -43,14 +64,15 @@
         if (!r.ok) throw new Error('bad status');
         const j = await r.json();
         this.data = j; this.stale = false; PL.setCurrency(j.currency);
-        const cached = Object.assign({}, j, { accounts: j.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, category: a.category, currency: a.currency })) });
+        const cached = Object.assign({}, j, { accounts: j.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, category: a.category, currency: a.currency, opened_on: a.opened_on })) });
         PL.store.optionsPut(cached).catch(() => {});
+        await this.refreshPending();
         return j;
       } catch (err) {
         clearTimeout(timer);
         if (err.auth) throw err;
         let cached = null; try { cached = await PL.store.optionsGet(); } catch (e) { /* no idb */ }
-        if (cached) { this.data = cached; this.stale = true; PL.setCurrency(cached.currency); return cached; }
+        if (cached) { this.data = cached; this.stale = true; PL.setCurrency(cached.currency); await this.refreshPending(); return cached; }
         throw err;
       }
     },
@@ -153,8 +175,9 @@
     const offlineNow = () => !navigator.onLine && !editing;
 
     const accounts = opts.accounts; const people = opts.people;
-    const accItems = accounts.map((a) => ({ value: String(a.id), label: a.name, sub: a.category }));
-    const hasMany = accounts.length > 0;
+    // editing an existing transaction can't use something that doesn't exist on the server yet
+    const accountItems = () => accounts.filter((a) => !(editing && a.pending)).map((a) => ({ value: String(a.id), label: a.name, sub: a.category }));
+    let accItems = accountItems();
 
     const root = document.createElement('form'); root.noValidate = true; root.className = 'tx-form'; root.autocomplete = 'off';
     root.setAttribute('aria-label', editing ? 'Edit transaction' : 'Add transaction');
@@ -213,7 +236,7 @@
     }
 
     function personItems() {
-      let list = people.map((p) => ({ value: String(p.id), label: p.name, _r: p.receivable_minor || 0, _p: p.payable_minor || 0 }));
+      let list = people.filter((p) => !(editing && p.pending)).map((p) => ({ value: String(p.id), label: p.name, _r: p.receivable_minor || 0, _p: p.payable_minor || 0 }));
       if (S.type === 'repayment_received') { const owing = list.filter((p) => p._r > 0); if (owing.length) list = owing; list.forEach((p) => { p.sub = p._r ? `owes you ${PL.fmt(p._r)}` : ''; }); }
       else if (S.type === 'repayment_made') { const owed = list.filter((p) => p._p > 0); if (owed.length) list = owed; list.forEach((p) => { p.sub = p._p ? `you owe ${PL.fmt(p._p)}` : ''; }); }
       else list.forEach((p) => { p.sub = p._r ? `owes you ${PL.fmt(p._r)}` : p._p ? `you owe ${PL.fmt(p._p)}` : ''; });
@@ -226,7 +249,7 @@
       wrap.innerHTML = `<label>${esc(label)}${required ? '' : ' <span class="faint">(optional)</span>'}</label><div data-slot></div><div class="error" hidden></div>`;
       $('[data-slot]', wrap).appendChild(widget.el || widget); fieldsHost.appendChild(wrap); return wrap;
     }
-    const noAccounts = () => { fieldsHost.innerHTML = `<div class="alert warning">${PL.icon('triangle-alert')}<div class="grow">You need an account first. <a href="/accounts/new">Create one</a>.</div></div>`; PL.icons(); };
+    const noAccounts = () => { fieldsHost.innerHTML = `<div class="alert warning">${PL.icon('triangle-alert')}<div class="grow">You need an account first. <a href="/accounts/new" data-add-account>Create one</a>.</div></div>`; PL.icons(); };
 
     function render() {
       applyDefaults(); fieldsHost.innerHTML = '';
@@ -234,7 +257,7 @@
       $('[data-f="due_date"]', root).classList.toggle('hidden', !(S.type === 'lent' || S.type === 'borrowed'));
       root.querySelectorAll('[data-type]').forEach((b) => { const on = b.dataset.type === S.type; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); });
       submitBtn.innerHTML = `${PL.icon(offlineNow() ? 'hard-drive-download' : 'check')} ${editing ? 'Save changes' : offlineNow() ? 'Save on this device (offline)' : 'Save ' + TYPES[S.type].verb}`;
-      if (!hasMany && S.type !== 'adjustment') { noAccounts(); updateHint(); return; }
+      if (!accounts.length && S.type !== 'adjustment') { noAccounts(); updateHint(); return; }
       const accCombo = (key, ariaLabel) => (combos[key] = combo({ items: accItems, value: S[key], placeholder: 'Choose account', ariaLabel, onChange: (v) => { S[key] = v; if (key === 'source') lsSet('pl_last_source', v); if (key === 'dest') lsSet('pl_last_dest', v); if (S.type === 'transfer') guardTransfer(key); } }));
       const personCombo = () => (combos.person = combo({ items: personItems(), value: S.person, placeholder: 'Choose or add a person', allowNew: S.type === 'lent' || S.type === 'borrowed', ariaLabel: 'Person', onChange: (v) => { S.person = v; updateHint(); } }));
       const catCombo = (kind) => (combos.category = combo({ items: (opts.categories[kind] || []).map((c) => ({ value: String(c.id), label: c.name })), value: S.category, placeholder: 'Category', allowClear: true, ariaLabel: 'Category', onChange: (v) => { S.category = v; } }));
@@ -347,7 +370,7 @@
     }
     async function enqueue(p, why) {
       try {
-        await PL.queue.add({ uuid: p.uuid, payload: p, label: summaryLabel(p), type: S.type, created_at: new Date().toISOString(), status: 'queued', error: '' });
+        await PL.queue.add({ uuid: p.uuid, kind: 'transaction', payload: p, label: summaryLabel(p), type: S.type, created_at: new Date().toISOString(), status: 'queued', error: '' });
       } catch (e) { PL.toast('This device could not store the transaction. It was NOT saved anywhere.', 'error'); return false; }
       PL.toast(why || 'Held on this device. NOT saved on the server yet; it will sync when you are online.', 'warning', 7000);
       PL.queue.refreshUI(); PL.queue.sync();
@@ -359,7 +382,10 @@
       if (errs.length) { errs.forEach(([f, m]) => showError(f, m)); const first = root.querySelector('.has-error'); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
       submitBtn.disabled = true; const label = submitBtn.innerHTML; submitBtn.textContent = 'Saving…';
       try {
-        if (!editing && !navigator.onLine) { const ok = await enqueue(p); if (ok) done({ queued: true }); return; }
+        if (!editing && (!navigator.onLine || Queue.refsOf(p).length)) {
+          const ok = await enqueue(p, navigator.onLine ? 'Held until the new account or person is saved on the server. It will sync in order.' : undefined);
+          if (ok) done({ queued: true }); return;
+        }
         let res;
         try { res = await sendOnline(p); }
         catch (err) {
@@ -383,13 +409,26 @@
 
     const relabel = () => { if (!submitBtn.disabled) { submitBtn.innerHTML = `${PL.icon(offlineNow() ? 'hard-drive-download' : 'check')} ${editing ? 'Save changes' : offlineNow() ? 'Save on this device (offline)' : 'Save ' + TYPES[S.type].verb}`; PL.icons(); } };
     window.addEventListener('online', relabel); window.addEventListener('offline', relabel);
+    // an account or person added while this form is open (offline) shows up straight away
+    Options.listeners.push(() => { if (!root.isConnected) return false; accItems = accountItems(); render(); return true; });
     render(); setTimeout(() => amountEl.focus(), 30);
     return { el: root, state: S };
   }
 
   /* ---------------------------------------------------------------- queue + sync */
+  /* The queue holds three kinds of item. Accounts sync first, then people, then transactions, because a queued
+   * transaction may refer to an account or person that was also created offline ("acct:<uuid>"). A transaction
+   * whose account or person was rejected is HELD, never sent and never guessed at. */
+  const KIND_ORDER = { account: 0, person: 1, transaction: 2 };
+  const kindOf = (i) => i.kind || 'transaction';
+  const API_BASE = (CREATE_URL || '').replace(/\/transactions\/?$/, '');
+  const urlFor = (i) => ({ account: API_BASE + '/accounts', person: API_BASE + '/people' }[kindOf(i)] || CREATE_URL);
+  const refKey = (i) => (kindOf(i) === 'account' ? 'acct:' : 'person:') + String(i.uuid).toLowerCase();
+  const describe = (i) => `the ${kindOf(i)} \u201c${(i.payload || {}).name || ''}\u201d`;
+  const KIND_NOUN = { account: 'account', person: 'person', transaction: 'transaction' };
   const Queue = {
     syncing: false, authIssue: false,
+    refsOf(p) { return ['source_account_id', 'dest_account_id', 'account_id', 'person_id'].map((k) => p[k]).filter((v) => typeof v === 'string' && /^(acct|person):/i.test(v)); },
     async add(item) { await PL.store.queuePut(item); },
     async all() { try { return await PL.store.queueAll(); } catch (e) { return []; } },
     async refreshUI() {
@@ -405,51 +444,79 @@
     },
     render(host, items) {
       if (!items.length) { host.innerHTML = '<p class="muted small">Nothing waiting. Everything you recorded has been confirmed by the server.</p>'; return; }
+      const fixable = (i) => i.status === 'rejected' && (kindOf(i) !== 'transaction' || !body.dataset.offlinePage);
       host.innerHTML = items.map((i) => `<div class="queue-item ${i.status === 'rejected' ? 'failed' : ''}" data-uuid="${esc(i.uuid)}">
         <div class="row between"><strong class="small">${esc(i.label || 'Transaction')}</strong><span class="xs muted">${esc(new Date(i.created_at).toLocaleString())}</span></div>
-        ${i.status === 'rejected' ? `<div class="small neg" style="margin:.3rem 0">Rejected by the server: ${esc(i.error)}</div>` : `<div class="xs warn" style="margin:.3rem 0">${PL.icon('clock')} Waiting. NOT saved on the server yet.</div>`}
-        <div class="btn-group">${i.status === 'rejected' && !body.dataset.offlinePage ? '<button class="btn sm" data-q-edit>Fix and resend</button>' : ''}<button class="btn sm danger" data-q-discard>Discard</button></div></div>`).join('');
+        ${i.status === 'rejected' ? `<div class="small neg" style="margin:.3rem 0">Rejected by the server: ${esc(i.error)}</div>`
+          : i.status === 'held' ? `<div class="xs warn" style="margin:.3rem 0">${PL.icon('pause')} ${esc(i.error)}</div>`
+          : `<div class="xs warn" style="margin:.3rem 0">${PL.icon('clock')} Waiting. NOT saved on the server yet.</div>`}
+        <div class="btn-group">${fixable(i) ? '<button class="btn sm" data-q-edit>Fix and resend</button>' : ''}<button class="btn sm danger" data-q-discard>Discard</button></div></div>`).join('');
       PL.icons();
       host.querySelectorAll('[data-q-discard]').forEach((b) => b.addEventListener('click', async () => {
         const uuid = b.closest('[data-uuid]').dataset.uuid;
-        if (await PL.confirm('Discard this transaction? It was never saved on the server, so it will be gone.', { confirmLabel: 'Discard' })) { await PL.store.queueDelete(uuid); this.refreshUI(); const sheet = document.getElementById('queue-sheet-list'); if (sheet) this.render(sheet, await this.all()); }
+        const all = await this.all(); const item = all.find((x) => x.uuid === uuid); if (!item) return;
+        const users = kindOf(item) === 'transaction' ? 0 : all.filter((x) => kindOf(x) === 'transaction' && this.refsOf(x.payload).some((r) => r.toLowerCase() === refKey(item))).length;
+        const extra = users ? ` ${users} waiting transaction${users > 1 ? 's use' : ' uses'} it and will be rejected.` : '';
+        if (await PL.confirm(`Discard this ${KIND_NOUN[kindOf(item)]}? It was never saved on the server, so it will be gone.${extra}`, { confirmLabel: 'Discard' })) {
+          await PL.store.queueDelete(uuid); await Options.refreshPending(); this.refreshUI();
+          const sheet = document.getElementById('queue-sheet-list'); if (sheet) this.render(sheet, await this.all());
+        }
       }));
       host.querySelectorAll('[data-q-edit]').forEach((b) => b.addEventListener('click', async () => {
         const item = await PL.store.queueGet(b.closest('[data-uuid]').dataset.uuid); if (!item) return;
-        const p = item.payload; PL.quickOpen(p.type, Object.assign({}, p, { amount: p.amount, uuid: item.uuid }));
+        const p = item.payload;
+        if (kindOf(item) === 'account' && PL.addAccountSheet) PL.addAccountSheet(p);
+        else if (kindOf(item) === 'person' && PL.addPersonSheet) PL.addPersonSheet(p);
+        else PL.quickOpen(p.type, Object.assign({}, p, { amount: p.amount, uuid: item.uuid }));
       }));
     },
     async sync(manual) {
       if (this.syncing || !navigator.onLine || !PL.csrf()) return;
-      this.syncing = true; this.authIssue = false; let synced = 0; let rejected = 0;
+      this.syncing = true; this.authIssue = false; let synced = 0; let rejected = 0; let held = 0;
       const run = async () => {
-        const items = (await this.all()).filter((i) => i.status !== 'rejected');
+        const all = await this.all();
+        const items = all.filter((i) => i.status !== 'rejected')
+          .sort((a, b) => (KIND_ORDER[kindOf(a)] - KIND_ORDER[kindOf(b)]) || (a.created_at < b.created_at ? -1 : 1));
+        const rejectedRefs = new Map(); // refs the server refused -> what to tell the user
+        for (const i of all) if (i.status === 'rejected' && kindOf(i) !== 'transaction') rejectedRefs.set(refKey(i), describe(i));
         for (const item of items) {
+          if (kindOf(item) === 'transaction') {
+            const blocker = this.refsOf(item.payload).map((r) => r.toLowerCase()).find((r) => rejectedRefs.has(r));
+            if (blocker) {
+              const msg = `Waiting for ${rejectedRefs.get(blocker)}, which the server rejected. Fix or discard that first.`;
+              if (item.status !== 'held' || item.error !== msg) { item.status = 'held'; item.error = msg; await PL.store.queuePut(item); }
+              held += 1; continue;
+            }
+            if (item.status === 'held') { item.status = 'queued'; item.error = ''; await PL.store.queuePut(item); }
+          }
           let res;
           try {
             const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 15000);
-            res = await fetch(CREATE_URL, { method: 'POST', credentials: 'same-origin', signal: ctl.signal, headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': PL.csrf() }, body: JSON.stringify(item.payload) });
+            res = await fetch(urlFor(item), { method: 'POST', credentials: 'same-origin', signal: ctl.signal, headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRFToken': PL.csrf() }, body: JSON.stringify(item.payload) });
             clearTimeout(timer);
           } catch (e) { break; } // network trouble: keep everything queued, retry later
           let data = {}; try { data = await res.json(); } catch (e) { /* ignore */ }
           if (res.ok && data.ok) { await PL.store.queueDelete(item.uuid); synced += 1; }
-          else if (res.status === 422) { item.status = 'rejected'; item.error = data.error || 'Rejected.'; await PL.store.queuePut(item); rejected += 1; }
+          else if (res.status === 422) {
+            item.status = 'rejected'; item.error = data.error || 'Rejected.'; await PL.store.queuePut(item); rejected += 1;
+            if (kindOf(item) !== 'transaction') rejectedRefs.set(refKey(item), describe(item));
+          }
           else if (res.status === 401 || res.status === 400) { this.authIssue = true; break; }
           else break; // server error: stop, keep queued
         }
       };
       try { if (navigator.locks) await navigator.locks.request('pocketledger-sync', { ifAvailable: true }, async (lock) => { if (lock) await run(); }); else await run(); }
       finally { this.syncing = false; }
-      await this.refreshUI();
-      if (synced) { PL.toast(`${synced} transaction${synced > 1 ? 's' : ''} synced and confirmed by the server.`, 'success'); setTimeout(() => { if (!document.querySelector('.overlay')) location.reload(); }, 900); }
-      if (rejected) PL.toast(`${rejected} queued transaction${rejected > 1 ? 's were' : ' was'} rejected by the server. Open the queue to fix or discard.`, 'error');
-      if (this.authIssue) PL.toast('Sign in again to sync your waiting transactions.', 'warning');
-      else if (manual && !synced && !rejected && (await this.all()).length) PL.toast('Still waiting for a connection.', 'warning');
+      await Options.refreshPending(); await this.refreshUI();
+      if (synced) { PL.toast(`${synced} waiting item${synced > 1 ? 's' : ''} synced and confirmed by the server.`, 'success'); setTimeout(() => { if (!document.querySelector('.overlay')) location.reload(); }, 900); }
+      if (rejected) PL.toast(`${rejected} waiting item${rejected > 1 ? 's were' : ' was'} rejected by the server. Open the queue to fix or discard.`, 'error');
+      if (this.authIssue) PL.toast('Sign in again to sync your waiting items.', 'warning');
+      else if (manual && !synced && !rejected && (await this.all()).length) PL.toast(held ? 'Some items are waiting for a rejected account or person.' : 'Still waiting for a connection.', 'warning');
     },
     async openSheet() {
       const sheet = document.createElement('div'); sheet.className = 'sheet';
       sheet.innerHTML = `<div class="sheet-head"><h2>Waiting on this device</h2><button class="btn ghost sm" data-x aria-label="Close">${PL.icon('x')}</button></div>
-        <div class="sheet-body"><p class="muted small">These transactions are <strong>not saved on the server yet</strong>. They are removed from here only after the server confirms them.</p>
+        <div class="sheet-body"><p class="muted small">These accounts, people and transactions are <strong>not saved on the server yet</strong>. They are removed from here only after the server confirms them.</p>
         <div id="queue-sheet-list"></div>${this.authIssue ? `<a class="btn primary block" href="${esc(LOGIN_URL)}">Sign in to sync</a>` : `<button class="btn primary block" data-sync>${PL.icon('refresh-cw')} Sync now</button>`}</div>`;
       const ov = PL.overlay(sheet); $('[data-x]', sheet).addEventListener('click', () => ov.close());
       const list = $('#queue-sheet-list', sheet); this.render(list, await this.all());

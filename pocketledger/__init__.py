@@ -13,7 +13,7 @@ from .money import format_amount, format_money
 from .services import settings as settings_svc, undo
 from .timeutil import humanize_ago, utc_iso_to_local
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 NAV_ITEMS = [
     ("dashboard.index", "Dashboard", "layout-dashboard"),

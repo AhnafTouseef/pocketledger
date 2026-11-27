@@ -20,7 +20,11 @@ def _clean(value, limit, field, label):
     return value or None
 
 
-def create_person(conn, *, name, contact=None, notes=None):
+def find_by_client_uuid(conn, client_uuid):
+    return conn.execute("SELECT id FROM people WHERE client_uuid = ?", (client_uuid,)).fetchone()
+
+
+def create_person(conn, *, name, contact=None, notes=None, client_uuid=None):
     name = _clean(name, 80, "name", "Name")
     if not name:
         raise ValidationError("Enter the person's name.", "name")
@@ -31,8 +35,8 @@ def create_person(conn, *, name, contact=None, notes=None):
             raise ValidationError("Someone with that name already exists. Add a detail to tell them apart, e.g. “Rahim (cousin)”.", "name")
         now = utcnow_iso()
         cur = conn.execute(
-            "INSERT INTO people (name, contact, notes, created_at, updated_at) VALUES (?,?,?,?,?)",
-            (name, contact, notes, now, now),
+            "INSERT INTO people (name, contact, notes, created_at, updated_at, client_uuid) VALUES (?,?,?,?,?,?)",
+            (name, contact, notes, now, now, client_uuid),
         )
         grp.created("people", cur.lastrowid)
         audit.log(conn, "create", "person", cur.lastrowid, after={"name": name})
