@@ -36,6 +36,12 @@
     /* Accounts and people created on this device but not yet confirmed by the server are shown in the pickers
      * (marked "not synced yet") under the id "acct:<uuid>" / "person:<uuid>". The server resolves those
      * references when the queued transactions arrive. They are never written to the cached copy. */
+    /* A record just created through the server (not queued): make it available to forms that are already open. */
+    addKnown(kind, rec) {
+      const d = this.data; if (!d) return;
+      (kind === 'account' ? d.accounts : d.people).push(rec);
+      this.listeners = this.listeners.filter((fn) => fn() !== false);
+    },
     async refreshPending() {
       const d = this.data; if (!d) return;
       for (const list of [d.accounts, d.people]) for (let i = list.length - 1; i >= 0; i--) if (list[i].pending) list.splice(i, 1);
@@ -123,12 +129,15 @@
       btn.setAttribute('aria-expanded', 'true'); el.classList.add('open');
       panel = document.createElement('div'); panel.className = 'combo-panel';
       const searchable = cfg.searchable !== false && (items.length > 5 || cfg.allowNew);
-      panel.innerHTML = `${searchable ? `<input class="combo-search" type="search" placeholder="${cfg.allowNew ? 'Search or type a new name' : 'Search'}" autocomplete="off" aria-label="Search">` : ''}<ul class="combo-list" role="listbox"></ul>`;
-      el.appendChild(panel); paintList();
+      panel.innerHTML = `${searchable ? `<input class="combo-search" type="search" placeholder="${cfg.allowNew ? 'Search or type a new name' : 'Search'}" autocomplete="off" aria-label="Search">` : ''}<ul class="combo-list" role="listbox"></ul>${cfg.onAdd ? `<div class="combo-foot"><button type="button" data-add>${PL.icon('plus')} ${esc(cfg.addLabel || 'Add new')}</button></div>` : ''}`;
+      el.appendChild(panel); paintList(); PL.icons();
       const search = panel.querySelector('input');
       if (search) { search.focus(); search.addEventListener('input', () => { query = search.value; hl = 0; paintList(); }); }
       panel.addEventListener('mousedown', (e) => { e.preventDefault(); });
-      panel.addEventListener('click', (e) => { const li = e.target.closest('li[data-i]'); if (li) choose(visible()[Number(li.dataset.i)]); });
+      panel.addEventListener('click', (e) => {
+        if (cfg.onAdd && e.target.closest('[data-add]')) { const q = query.trim(); close(); cfg.onAdd(q); return; }
+        const li = e.target.closest('li[data-i]'); if (li) choose(visible()[Number(li.dataset.i)]);
+      });
       document.addEventListener('mousedown', onDocDown, true);
       setTimeout(() => panel && panel.scrollIntoView({ block: 'nearest' }), 0);
     }
@@ -258,8 +267,12 @@
       root.querySelectorAll('[data-type]').forEach((b) => { const on = b.dataset.type === S.type; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); });
       submitBtn.innerHTML = `${PL.icon(offlineNow() ? 'hard-drive-download' : 'check')} ${editing ? 'Save changes' : offlineNow() ? 'Save on this device (offline)' : 'Save ' + TYPES[S.type].verb}`;
       if (!accounts.length && S.type !== 'adjustment') { noAccounts(); updateHint(); return; }
-      const accCombo = (key, ariaLabel) => (combos[key] = combo({ items: accItems, value: S[key], placeholder: 'Choose account', ariaLabel, onChange: (v) => { S[key] = v; if (key === 'source') lsSet('pl_last_source', v); if (key === 'dest') lsSet('pl_last_dest', v); if (S.type === 'transfer') guardTransfer(key); } }));
-      const personCombo = () => (combos.person = combo({ items: personItems(), value: S.person, placeholder: 'Choose or add a person', allowNew: S.type === 'lent' || S.type === 'borrowed', ariaLabel: 'Person', onChange: (v) => { S.person = v; updateHint(); } }));
+      const accChange = (key) => (v) => { S[key] = v; if (key === 'source') lsSet('pl_last_source', v); if (key === 'dest') lsSet('pl_last_dest', v); if (S.type === 'transfer') guardTransfer(key); };
+      // "Add new account" sits in the list itself, so nobody has to leave the form to create one first
+      const addAccount = (key, change) => (q) => PL.addAccountSheet && PL.addAccountSheet({ name: q }, { onDone: (id) => { change(String(id)); if (combos[key]) combos[key].set(String(id)); } });
+      const accCombo = (key, ariaLabel) => (combos[key] = combo({ items: accItems, value: S[key], placeholder: 'Choose account', ariaLabel, onChange: accChange(key), onAdd: addAccount(key, accChange(key)), addLabel: 'Add new account' }));
+      const personCombo = () => (combos.person = combo({ items: personItems(), value: S.person, placeholder: 'Choose or add a person', allowNew: S.type === 'lent' || S.type === 'borrowed', ariaLabel: 'Person', onChange: (v) => { S.person = v; updateHint(); },
+        onAdd: (S.type === 'lent' || S.type === 'borrowed') ? (q) => PL.addPersonSheet && PL.addPersonSheet({ name: q }, { onDone: (id) => { S.person = String(id); if (combos.person) combos.person.set(S.person); updateHint(); } }) : null, addLabel: 'Add new person' }));
       const catCombo = (kind) => (combos.category = combo({ items: (opts.categories[kind] || []).map((c) => ({ value: String(c.id), label: c.name })), value: S.category, placeholder: 'Category', allowClear: true, ariaLabel: 'Category', onChange: (v) => { S.category = v; } }));
       switch (S.type) {
         case 'expense': addField('source_account_id', 'Paid from', accCombo('source', 'Paid from'), true); addField('category_id', 'Category', catCombo('expense'), false); break;
@@ -270,7 +283,7 @@
         case 'repayment_received': addField('person_id', 'Repaid by', personCombo(), true); addField('dest_account_id', 'Received into', accCombo('dest', 'Received into'), true); break;
         case 'repayment_made': addField('person_id', 'Repaying', personCombo(), true); addField('source_account_id', 'Paid from', accCombo('source', 'Paid from'), true); break;
         case 'adjustment': {
-          addField('account_id', 'Account', (combos.account = combo({ items: accItems, value: S.account, placeholder: 'Choose account', ariaLabel: 'Account', onChange: (v) => { S.account = v; } })), true);
+          addField('account_id', 'Account', (combos.account = combo({ items: accItems, value: S.account, placeholder: 'Choose account', ariaLabel: 'Account', onChange: (v) => { S.account = v; }, onAdd: (q) => PL.addAccountSheet && PL.addAccountSheet({ name: q }, { onDone: (id) => { S.account = String(id); if (combos.account) combos.account.set(S.account); } }), addLabel: 'Add new account' })), true);
           const sel = document.createElement('select'); sel.className = 'input'; sel.innerHTML = '<option value="increase">Balance goes up (found money)</option><option value="decrease">Balance goes down (money missing)</option>';
           sel.value = S.direction; sel.addEventListener('change', () => { S.direction = sel.value; }); addField('direction', 'Direction', { el: sel }, true); break;
         }

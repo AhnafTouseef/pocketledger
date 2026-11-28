@@ -41,8 +41,14 @@
     return { queued: true };
   }
 
-  function finish(kind, name, result, ov) {
+  function finish(kind, name, result, ov, rec, cb) {
     ov.close();
+    if (cb && cb.onDone) {
+      // opened from inside an entry form: keep that form as it is and hand the new record back to it
+      if (result.queued) { PL.toast(`\u201c${name}\u201d is held on this device (not on the server yet). You can use it right away.`, 'warning', 6000); cb.onDone(rec.pendingId); }
+      else { PL.options.addKnown(kind, Object.assign({ id: result.data.id }, rec.known)); PL.toast(result.data.message || 'Saved.', 'success'); cb.onDone(String(result.data.id)); }
+      return;
+    }
     if (result.queued) { PL.toast(`“${name}” is held on this device. NOT saved on the server yet; it will sync when you are online. You can use it right away.`, 'warning', 8000); return; }
     PL.undoLater(result.data.undo, result.data.message || 'Saved.');
     if (document.body.dataset.offlinePage) { PL.options.load(true).catch(() => {}); PL.showPending(); } else location.reload();
@@ -64,7 +70,7 @@
   const needsOnline = '<div class="alert warning">PocketLedger needs to load your account types once before this works offline. Reconnect, open PocketLedger once, then try again.</div>';
 
   /* ------------------------------------------------------------- account */
-  PL.addAccountSheet = async function (prefill) {
+  PL.addAccountSheet = async function (prefill, cb) {
     prefill = prefill || {};
     const { host, ov } = sheetShell('New account');
     const opts = await loadOptions();
@@ -104,12 +110,15 @@
       const minor = PL.parseAmount(p.opening_balance || '0') || 0;
       const r = await create('account', p, `New account “${p.name}” · ${PL.fmt(minor)}`, err);
       btn.disabled = false; label();
-      if (!r.error) finish('account', p.name, r, ov);
+      if (!r.error) {
+        const cat = opts.account_categories.find((c) => String(c.id) === String(p.category_id)) || {};
+        finish('account', p.name, r, ov, { pendingId: 'acct:' + uuid, known: { name: p.name, kind: cat.kind || '', category: cat.name || '', currency: p.currency, balance_minor: minor, opened_on: p.opened_on } }, cb);
+      }
     });
   };
 
   /* ------------------------------------------------------------- person */
-  PL.addPersonSheet = async function (prefill) {
+  PL.addPersonSheet = async function (prefill, cb) {
     prefill = prefill || {};
     const { host, ov } = sheetShell('Add person');
     const opts = await loadOptions();
@@ -135,14 +144,18 @@
       btn.disabled = true; btn.textContent = 'Saving…';
       const r = await create('person', p, `New person “${p.name}”`, err);
       btn.disabled = false; label();
-      if (!r.error) finish('person', p.name, r, ov);
+      if (!r.error) finish('person', p.name, r, ov, { pendingId: 'person:' + uuid, known: { name: p.name, receivable_minor: 0, payable_minor: 0 } }, cb);
     });
   };
 
   /* ------------------------------------------------------------- entry points */
   document.addEventListener('click', (e) => {
     const direct = e.target.closest('[data-add-account], [data-add-person]');
-    if (direct && direct.tagName !== 'A') { e.preventDefault(); (direct.hasAttribute('data-add-account') ? PL.addAccountSheet : PL.addPersonSheet)(); return; }
+    if (direct) {
+      e.preventDefault();
+      const cb = direct.closest('.tx-form') ? { onDone: () => {} } : undefined;   // inside an entry form: don't reload the page
+      (direct.hasAttribute('data-add-account') ? PL.addAccountSheet : PL.addPersonSheet)({}, cb); return;
+    }
     if (navigator.onLine) return;                       // online: the normal pages are used
     const a = e.target.closest('a[href]'); if (!a) return;
     let path = ''; try { path = new URL(a.href, location.href).pathname; } catch (err) { return; }

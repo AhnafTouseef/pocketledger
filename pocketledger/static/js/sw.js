@@ -4,7 +4,7 @@
  * pages or API responses, so balances and transactions are never shown stale or from another
  * session. Offline recording is handled in the page (IndexedDB queue), not here.
  */
-const VERSION = 'pl-v4';
+const VERSION = 'pl-v5';
 const SHELL = `${VERSION}-shell`;
 const PRECACHE = [
   '/offline',

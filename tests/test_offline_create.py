@@ -81,3 +81,8 @@ def test_offline_page_offers_the_add_buttons_and_loads_the_script(authed):
     html = authed.get("/offline").get_data(as_text=True)
     assert "data-add-account" in html and "data-add-person" in html and "/static/js/offadd.js" in html
     assert "/static/js/offadd.js" in authed.get("/").get_data(as_text=True)
+
+
+def test_scripts_for_dropdown_add_buttons_are_served(authed):
+    js = authed.get("/static/js/txform.js").get_data(as_text=True)
+    assert "Add new person" in js and "Add new account" in js and "data-add" in js

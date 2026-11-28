@@ -185,7 +185,10 @@ Once you have opened PocketLedger online, you can keep using it without a connec
 
 - **Record transactions** of every type. They are held on the device, marked "not saved yet", and sent when you are back
   online. Each carries a unique id, so a retry can never save it twice.
-- **Add accounts and people.** Use the normal "New account" / "Add person" buttons (or the buttons on the offline page).
+- **Add accounts and people from the dropdowns.** Every account list, and the person list for lending and borrowing, ends with an
+  "Add new account / person" button, so you never have to create them first. The half-filled form stays as it is and the new
+  record is selected for you. Online it is saved at once; offline it is held on the device (see below).
+- **Add accounts and people elsewhere.** Use the normal "New account" / "Add person" buttons (or the buttons on the offline page).
   They are held on the device and appear in the pickers straight away, marked "not synced yet", so you can record
   transactions against them before anything has reached the server. An account's opening date defaults to today on the device.
 - **Sync order.** Accounts first, then people, then transactions. If the server rejects an account or person (for example the

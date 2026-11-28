@@ -341,3 +341,9 @@ a.stat:hover { border-color: var(--border-strong); background: var(--surface-2);
   border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pl-spin .7s linear infinite; }
 @keyframes pl-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .btn.is-busy::before { animation-duration: 2.4s; } }
+
+/* "Add new …" button pinned under a dropdown list */
+.combo-foot { border-top: 1px solid var(--border); padding: .3rem; }
+.combo-foot button { width: 100%; display: flex; align-items: center; gap: .45rem; padding: .6rem .7rem; border: 0; border-radius: 8px;
+  background: transparent; color: var(--pos); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.combo-foot button:hover, .combo-foot button:focus-visible { background: var(--surface-3); outline: none; }
